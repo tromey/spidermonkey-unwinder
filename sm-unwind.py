@@ -6,7 +6,7 @@ import struct
 SP_REGNO = 7
 PC_REGNO = 16
 
-FRAMETYPE_BITS = (1 << gdb.parse_and_eval('js::jit::FRAMETYPE_BITS')) - 1
+FRAMETYPE_MASK = (1 << gdb.parse_and_eval('js::jit::FRAMETYPE_BITS')) - 1
 FRAMESIZE_SHIFT = gdb.parse_and_eval('js::jit::FRAMESIZE_SHIFT')
 
 CalleeTokenTagMask = 3  # also hard-coded in JS
@@ -83,7 +83,7 @@ class SpiderMonkeyUnwinder(object):
         descriptor = struct.unpack_from(fmt, callbacks.read_memory(sp, size))
         regs[PC_REGNO] = callbacks.read_memory(sp + size, size)
         args_size = descriptor >> FRAMESIZE_SHIFT
-        frame_type = descriptor & FRAMETYPE_BITS
+        frame_type = descriptor & FRAMETYPE_MASK
         type_size = type_sizes[frame_type]
         regs[SP_REGNO] = struct.pack(fmt, sp + args_size + type_size)
         return regs

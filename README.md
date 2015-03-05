@@ -23,10 +23,39 @@ SpiderMonkey unwinder is written in Python.
 # Display
 
 My current plan is to display a function name using a frame filter.
-This work is not even started
+This work is not even started.
 
 Writing a jit symbol reader is a pain: the current gdb jit interface
 admits the possibility of reading symbols from the inferior.  However,
 this is done in response to some inferior event.  It would be much
 better if it were possible to read symbols on demand instead -- that
 is, in response to a user action in gdb.
+
+# To Do
+
+* Need a simple architecture abstraction to hold the register numbers
+  and any other per-arch bits
+
+* Need a way to detect the trampoline frames used to enter JIT code.
+  These are made by `generateEnterJIT`, and there seem to be just two:
+  `JitRuntime::enterJIT_` and `JitRuntime::enterBaselineJIT_`.
+
+* Need a way to compute the frame pointer for the newest JIT frame on
+  the stack.  We can maybe stash it in `JSRuntime` in a special debug
+  mode?  Something like this is done for exit frames, see
+  `JSRuntime::jitTop`.
+
+* Need a type cache for some types in the unwinder.  There's one in
+  the existing gdb scripts in js.
+
+* We may need to keep some state to handle exit frames properly.  Only
+  the newest SP is held in `jitTop`; the rest are in a list of
+  `JitActivation` objects.  In this case we can cache the state by
+  thread; and clear the entire cache whenever `gdb.events.cont` emits
+  an event.
+
+* It would be really good to be able to find all the saved registers
+  in ordinary JIT frames.  I'm not sure if this is reasonably possible.
+
+* We should at least consider what happens if gdb stops in a function
+  prologue.

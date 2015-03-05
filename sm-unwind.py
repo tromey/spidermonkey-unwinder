@@ -72,6 +72,8 @@ def is_trampoline(addr):
 
 class SpiderMonkeyUnwinder(object):
     def unwind(self, callbacks):
+        # If the PC belongs in some existing shared library, it can't
+        # be ours.
         pc = unpack_addr(callbacks.get_register(PC_REGNO))
         if gdb.solib_name(pc) is not None:
             return False

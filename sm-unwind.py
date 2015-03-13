@@ -52,7 +52,7 @@ def init_frame_type_map():
     return result
 
 # Array mapping frametype enum values to names.
-FrameTypeMap = init_frame_type_map()
+frameTypeMap = init_frame_type_map()
 
 
 def callee_token_to_script(token):
@@ -73,6 +73,98 @@ def unwind_ordinary(pc, callbacks):
     type_size = type_sizes[frame_type]
     regs[SP_REGNO] = struct.pack(fmt, sp + args_size + type_size)
     return regs
+
+# This is used to map a stack pointer to the name of the frame.  This
+# information is used by the frame filter at display time.
+class StackMap(object):
+    def __init__(self):
+        # FIXME this really ought to be per-thread.
+        self.spmap = {}
+
+    def record(self, sp, name):
+        self.spmap[sp] = name
+
+    def getName(self, sp):
+        return self.spmap[sp]
+
+# FIXME need intelligent lifetime management for this.
+currentStackMap = StackMap()
+
+# Cache the TlsPerThreadData key.  This is initialized once per run.
+# FIXME - how does this work?  Maybe recreate it on each stop with a
+# special case for the infcall we need?
+class CacheTlsKey(object):
+    def __init__(self):
+        # FIXME lang c++
+        self.mkey = gdb.parse_and_eval('js::TlsPerThreadData.mKey')
+        # Horrifying.  And quite hard to get nicely due to the need
+        # for an infcall.  It would be much better if we were using
+        # __thread instead, as gdb and glibc collude to make that
+        # usable.
+        ptd = gdb.parse_and_eval('__GI___pthread_getspecific(js::TlsPerThreadData.mKey)')
+        ptd = ptd.cast(gdb.lookup_type('PerThreadData').pointer())
+        self.jitTop = ptd['runtime']['jitTop']
+        self.activation = ptd['runtime']['jitActivation']
+
+    def getTop(self):
+        return self.jitTop
+
+    def getActivation(self):
+        return self.activation
+
+class ExitFrameState(object):
+    def __init__(self, mkeyCache):
+        self.activation = None
+        self.jittop = None
+        self.mkeyCache = mkeyCache
+        # FIXME lang c++
+        self.typeCommonFrameLayout = gdb.lookup_type('CommonFrameLayout')
+        self.typeExitFooterFrame = gdb.lookup_type('ExitFooterFrame')
+
+    # If this is an exit frame, return the new registers; or return
+    # None.  FIXME this should probably return an entire frame id.
+    def is_exit_frame(self, sp, fp):
+        if self.activation is None:
+            top = self.mkeyCache.getTop()
+        else:
+            top = self.activation['prevJitTop_']
+        # If TOP appears between the SP and FP, then we have an exit
+        # frame.
+        if sp > top or top > fp:
+            return None
+        if self.activation is None:
+            self.activation = self.mkeyCache.getActivation()
+        else:
+            self.activation = self.activation['prevJitActivation_']
+        currentStackMap.record(top, '<<exit frame>>')
+        # FIXME - now use CommonFrameLayout and ExitFooterFrame info
+        # to make a new frame.
+        return FIXME
+
+###
+#
+# Handling exit frames
+# jitTop marks the most recent
+# to find this we need (ugh)
+# ((PerThreadData*) __GI___pthread_getspecific(0))->runtime_->jitTop
+# 0 == TlsPerThreadData.mKey
+# ... really should use __thread here!
+#
+# seemingly if $rsp < jitTop < $rbp
+# then we can assume we're seeing the exit frame
+#
+# then (CommonFrameLayout*) jittop
+# and (ExitFooterFrame*)(jittop - sizeof(ExitFooterFrame))
+# are useful
+#
+# to find the next exit frame, see JitActivation::prevJitTop_
+# and JitActivation::prevJitActivation_
+# there is also JSRuntime::jitActivation
+# which is the next pointer for the outermost activation
+#
+# these form a linked list terminated with 0/0
+#
+###
 
 class SpiderMonkeyUnwinder(object):
     def unwind(self, callbacks):

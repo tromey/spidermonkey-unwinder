@@ -33,6 +33,13 @@ is, in response to a user action in gdb.
 
 # To Do
 
+* In the `.py` code, rather than returning a list of registers and
+  then later constructing a frame id, instead make a new `Frame`
+  object that has the registers, frame id, function name, and anything
+  else we want.  Then store this into `currentStackMap` keyed by the
+  stack pointer for use both by `get_frame_id` and by the eventual
+  frame filter.
+
 * Need a simple architecture abstraction to hold the register numbers
   and any other per-arch bits
 
@@ -43,7 +50,10 @@ is, in response to a user action in gdb.
 * Need a way to compute the frame pointer for the newest JIT frame on
   the stack.  We can maybe stash it in `JSRuntime` in a special debug
   mode?  Something like this is done for exit frames, see
-  `JSRuntime::jitTop`.
+  `JSRuntime::jitTop`.  Basically we need either a frame descriptor
+  emitted by the JIT, or a frame pointer of some kind.  As a hack we
+  could require the user to use some `set` command and determine this
+  by hand.
 
 * Need a type cache for some types in the unwinder.  There's one in
   the existing gdb scripts in js.

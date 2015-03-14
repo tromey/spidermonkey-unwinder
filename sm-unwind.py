@@ -51,9 +51,34 @@ def init_frame_type_map():
         result[field.enumval] = field.name
     return result
 
-# Array mapping frametype enum values to names.
+# Array mapping frametype enum values to Frame objects.
 frameTypeMap = init_frame_type_map()
 
+# Any frame we discover will be represented by an instance of this
+# type.
+class Frame(object):
+    def __init__(self):
+        self.regs = []
+        self.basePC = None
+        self.name = None
+
+    def getRegisters(self):
+        return self.regs
+
+    def getFrameID(self):
+        return (self.basePC, self.regs[SP])
+
+    def getName(self):
+        return self.name
+
+    def setRegister(self, regno, val):
+        self.regs[regno] = val
+
+    def setName(self, name):
+        self.name = name
+
+    def setBasePC(self, basePC):
+        self.basePC = basePC
 
 def callee_token_to_script(token):
     tag = long(token) & CalleeTokenTagMask
@@ -81,10 +106,10 @@ class StackMap(object):
         # FIXME this really ought to be per-thread.
         self.spmap = {}
 
-    def record(self, sp, name):
-        self.spmap[sp] = name
+    def record(self, frame):
+        self.spmap[frame.sp] = frame
 
-    def getName(self, sp):
+    def getFrame(self, sp):
         return self.spmap[sp]
 
 # FIXME need intelligent lifetime management for this.
@@ -136,10 +161,12 @@ class ExitFrameState(object):
             self.activation = self.mkeyCache.getActivation()
         else:
             self.activation = self.activation['prevJitActivation_']
-        currentStackMap.record(top, '<<exit frame>>')
         # FIXME - now use CommonFrameLayout and ExitFooterFrame info
         # to make a new frame.
-        return FIXME
+        frame = Frame()
+        frame.setName('<<exit frame>>')
+        currentStackMap.record(frame)
+        return frame
 
 ###
 #
@@ -167,26 +194,38 @@ class ExitFrameState(object):
 ###
 
 class SpiderMonkeyUnwinder(object):
-    def unwind(self, callbacks):
-        # If the PC belongs in some existing shared library, it can't
-        # be ours.
-        pc = unpack_addr(callbacks.get_register(PC_REGNO))
-        if gdb.solib_name(pc) is not None:
-            return False
+    def blah(self, callbacks):
 
         if self.is_trampoline(pc):
             return self.unwind_trampoline(pc, callbacks)
 
         return unwind_ordinary(pc, callbacks)
 
+    def unwind(self, callbacks):
+        # If the PC belongs in some existing shared library, it can't
+        # be ours.
+        pc = unpack_addr(callbacks.get_register(PC_REGNO))
+        if gdb.solib_name(pc) is not None:
+            return False
+        frame = self.exitFrame.is_exit_frame(sp, fp)
+        if not frame:
+            frame = self.is_entry(pc, callbacks)
+        if not frame:
+            frame = self.is_ordinary(pc, callbacks)
+        if not frame:
+            return False
+        self.mostRecentFrame = frame
+        return frame.getRegisters()
+
     def get_frame_id(self, callbacks):
-        sp = callbacks.get_register(SP_REGNO)
-        fmt = get_register(sp)
-        sp = struct.unpack_from(fmt, sp)
-        descriptor = struct.unpack_from(fmt, callbacks.read_memory(sp, size))
-        # FIXME find start of function
-        pc = struct.unpack_from(fmt, callbacks.read_memory(sp + size, size))
-        return (pc, sp)
+        return self.mostRecentFrame.getFrameID()
+        # sp = callbacks.get_register(SP_REGNO)
+        # fmt = get_register(sp)
+        # sp = struct.unpack_from(fmt, sp)
+        # descriptor = struct.unpack_from(fmt, callbacks.read_memory(sp, size))
+        # # FIXME find start of function
+        # pc = struct.unpack_from(fmt, callbacks.read_memory(sp + size, size))
+        # return (pc, sp)
 
 class x64_info(SpiderMonkeyUnwinder):
     SP_REGNO = 7

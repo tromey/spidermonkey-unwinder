@@ -33,13 +33,6 @@ is, in response to a user action in gdb.
 
 # To Do
 
-* In the `.py` code, rather than returning a list of registers and
-  then later constructing a frame id, instead make a new `Frame`
-  object that has the registers, frame id, function name, and anything
-  else we want.  Then store this into `currentStackMap` keyed by the
-  stack pointer for use both by `get_frame_id` and by the eventual
-  frame filter.
-
 * Need a simple architecture abstraction to hold the register numbers
   and any other per-arch bits
 

@@ -22,8 +22,10 @@ SpiderMonkey unwinder is written in Python.
 
 # Display
 
-My current plan is to display a function name using a frame filter.
-This work is not even started.
+The function name, and perhaps other information, will be displayed
+using a frame filter.
+
+# GDB
 
 Writing a jit symbol reader is a pain: the current gdb jit interface
 admits the possibility of reading symbols from the inferior.  However,

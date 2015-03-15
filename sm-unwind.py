@@ -1,6 +1,15 @@
 import gdb
 import GdbJitReader
 import struct
+import itertools
+
+try:
+    import gdb.FrameDecorator
+    FrameDecorator = gdb.FrameDecorator.FrameDecorator
+except ImportError:
+    # We're not going to install the filter, but we still need a
+    # superclass.
+    FrameDecorator = object
 
 def get_pack_fmt(buffer)
     if len(buffer) == 4:
@@ -80,6 +89,47 @@ class Frame(object):
     def setBasePC(self, basePC):
         self.basePC = basePC
 
+# This is used to map a stack pointer to the name of the frame.  This
+# information is used by the frame filter at display time.
+class StackMap(object):
+    def __init__(self):
+        # FIXME this really ought to be per-thread.
+        self.spmap = {}
+
+    def record(self, frame):
+        self.spmap[frame.sp] = frame
+
+    def getFrame(self, sp):
+        return self.spmap[sp]
+
+# FIXME need intelligent lifetime management for this.
+currentStackMap = StackMap()
+
+class JitFrameDecorator(FrameDecorator):
+    def __init__(self, base, jitFrame):
+        super(JitFrameDecorator, self).__init__(self, base)
+        self.jitFrame = jitFrame
+
+    def function(self):
+        return self.jitFrame.getName()
+
+# FIXME - nothing instantiates this yet
+class JitFrameFilter(object):
+    def __init__(self, objfile):
+        self.name = 'SpiderMonkey JIT'
+        self.enabled = True
+        self.priority = 100
+        objfile.frame_filters[self.name] = self
+
+    def maybeWrapFrame(self, frame):
+        # FIXME
+        if frame.mumble in currentStackMap:
+            return JitFrameDecorator(frame, currentStackMap[frame.mumble])
+        return frame
+
+    def filter(self, frameIter):
+        return itertools.imap(self.maybeWrapFrame)
+
 def callee_token_to_script(token):
     tag = long(token) & CalleeTokenTagMask
     token = long(token) & CalleeTokenMask
@@ -98,22 +148,6 @@ def unwind_ordinary(pc, callbacks):
     type_size = type_sizes[frame_type]
     regs[SP_REGNO] = struct.pack(fmt, sp + args_size + type_size)
     return regs
-
-# This is used to map a stack pointer to the name of the frame.  This
-# information is used by the frame filter at display time.
-class StackMap(object):
-    def __init__(self):
-        # FIXME this really ought to be per-thread.
-        self.spmap = {}
-
-    def record(self, frame):
-        self.spmap[frame.sp] = frame
-
-    def getFrame(self, sp):
-        return self.spmap[sp]
-
-# FIXME need intelligent lifetime management for this.
-currentStackMap = StackMap()
 
 # Cache the TlsPerThreadData key.  This is initialized once per run.
 # FIXME - how does this work?  Maybe recreate it on each stop with a

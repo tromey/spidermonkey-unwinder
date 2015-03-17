@@ -180,8 +180,7 @@ class ExitFrameState(object):
         self.typeCommonFrameLayout = gdb.lookup_type('CommonFrameLayout')
         self.typeExitFooterFrame = gdb.lookup_type('ExitFooterFrame')
 
-    # If this is an exit frame, return the new registers; or return
-    # None.  FIXME this should probably return an entire frame id.
+    # If this is an exit frame, return the new frame; or return None.
     def is_exit_frame(self, sp, fp):
         if self.activation is None:
             top = self.mkeyCache.getTop()

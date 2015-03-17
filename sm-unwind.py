@@ -182,6 +182,9 @@ class ExitFrameState(object):
 
     # If this is an exit frame, return the new frame; or return None.
     def is_exit_frame(self, sp, fp):
+        if self.activation == 0:
+            # Reached the end of the list.
+            return None
         if self.activation is None:
             top = self.mkeyCache.getTop()
         else:

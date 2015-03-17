@@ -201,7 +201,6 @@ class ExitFrameState(object):
         # to make a new frame.
         frame = Frame()
         frame.setName('<<exit frame>>')
-        currentStackMap.record(frame)
         return frame
 
 ###
@@ -251,6 +250,7 @@ class SpiderMonkeyUnwinder(object):
         if not frame:
             return False
         self.mostRecentFrame = frame
+        currentStackMap.record(frame)
         return frame.getRegisters()
 
     def get_frame_id(self, callbacks):

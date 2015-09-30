@@ -14,11 +14,8 @@ Second, displaying information about the frames.
 
 # Unwinding
 
-Because SpiderMonkey has many frame types, and because some of the
-decoding requires easy access to symbols and types -- things that are
-not available to ordinary jit unwinders in gdb -- this project has a
-shim to let a gdb JIT unwinder be written in Python.  Then, the
-SpiderMonkey unwinder is written in Python.
+This work relies on the Python unwinding support that was added in
+GDB 7.10.
 
 # Display
 

@@ -1,5 +1,4 @@
 import gdb
-import GdbJitReader
 import struct
 import itertools
 
@@ -10,6 +9,12 @@ except ImportError:
     # We're not going to install the filter, but we still need a
     # superclass.
     FrameDecorator = object
+
+_have_unwinder = True
+try:
+    import gdb.unwinder
+except ImportError:
+    _have_unwinder = False
 
 def get_pack_fmt(buffer)
     if len(buffer) == 4:
@@ -136,13 +141,13 @@ def callee_token_to_script(token):
     # FIXME
     # return Value(token).cast(gdb.lookup_type('js::JSScript').pointer())
 
-def unwind_ordinary(pc, callbacks):
+def unwind_ordinary(pc, pending_frame):
     regs = []
-    sp = callbacks.get_register(SP_REGNO)
+    sp = pending_frame.read_register(SP_REGNO)
     fmt = get_pack_fmt(sp)
     sp = struct.unpack_from(fmt, sp)
-    descriptor = struct.unpack_from(fmt, callbacks.read_memory(sp, size))
-    regs[PC_REGNO] = callbacks.read_memory(sp + size, size)
+    descriptor = struct.unpack_from(fmt, pending_frame.read_memory(sp, size))
+    regs[PC_REGNO] = pending_frame.read_memory(sp + size, size)
     args_size = descriptor >> FRAMESIZE_SHIFT
     frame_type = descriptor & FRAMETYPE_MASK
     type_size = type_sizes[frame_type]
@@ -228,44 +233,53 @@ class ExitFrameState(object):
 #
 ###
 
+class SpiderMonkeyFrameId(object):
+    def __init__(self, sp, pc):
+        self.sp = sp
+        self.pc = pc
+
 class SpiderMonkeyUnwinder(object):
-    def blah(self, callbacks):
+    enabled = True
+    name = 'SpiderMonkey'
+
+    def __call__(self, pending_frame):
+        # Probably don't need this with the new unwinder API?
+        # # If the PC belongs in some existing shared library, it can't
+        # # be ours.
+        # pc = unpack_addr(pending_frame.read_register(PC_REGNO))
+        # if gdb.solib_name(pc) is not None:
+        #     return None
 
         if self.is_trampoline(pc):
-            return self.unwind_trampoline(pc, callbacks)
+            return self.unwind_trampoline(pc, pending_frame)
 
-        return unwind_ordinary(pc, callbacks)
+        return unwind_ordinary(pc, pending_frame)
 
-    def unwind(self, callbacks):
-        # If the PC belongs in some existing shared library, it can't
-        # be ours.
-        pc = unpack_addr(callbacks.get_register(PC_REGNO))
-        if gdb.solib_name(pc) is not None:
-            return False
+    def unwind(self, pending_frame):
         frame = self.exitFrame.is_exit_frame(sp, fp)
         if not frame:
-            frame = self.is_entry(pc, callbacks)
+            frame = self.is_entry(pc, pending_frame)
         if not frame:
-            frame = self.is_ordinary(pc, callbacks)
+            frame = self.is_ordinary(pc, pending_frame)
         if not frame:
-            return False
+            return None
         self.mostRecentFrame = frame
         currentStackMap.record(frame)
         return frame.getRegisters()
 
-    def get_frame_id(self, callbacks):
+    def get_frame_id(self, pending_frame):
         return self.mostRecentFrame.getFrameID()
-        # sp = callbacks.get_register(SP_REGNO)
-        # fmt = get_register(sp)
+        # sp = pending_frame.read_register(SP_REGISTER)
+        # fmt = read_register(sp)
         # sp = struct.unpack_from(fmt, sp)
-        # descriptor = struct.unpack_from(fmt, callbacks.read_memory(sp, size))
+        # descriptor = struct.unpack_from(fmt, pending_frame.read_memory(sp, size))
         # # FIXME find start of function
-        # pc = struct.unpack_from(fmt, callbacks.read_memory(sp + size, size))
+        # pc = struct.unpack_from(fmt, pending_frame.read_memory(sp + size, size))
         # return (pc, sp)
 
 class x64_info(SpiderMonkeyUnwinder):
-    SP_REGNO = 7
-    PC_REGNO = 16
+    SP_REGISTER = "rsp"
+    PC_REGISTER = "rip"
 
     # FIXME define other registers here.
 
@@ -275,17 +289,19 @@ class x64_info(SpiderMonkeyUnwinder):
         # Maybe this can move to the base class
         return False
 
-    def unwind_trampoline(self, pc, callbacks):
-        sp = callbacks.get_register(SP_REGNO)
+    def unwind_trampoline(self, pc, pending_frame):
+        sp = pending_frame.read_register(SP_REGISTER)
         wordsize = len(sp)
         sp = unpack_addr(sp)
         regs = []
         # Must be in sync with Trampoline-x64.cpp:generateEnterJIT.
-        pushed_regs = [rbp, rbx, r12, r13, r14, r15]
+        pushed_regs = ["rbp", "rbx", "r12", "r13", "r14", "r15"]
         for reg in pushed_regs:
             sp = sp - wordsize
-            regs[reg] = callbacks.read_memory(sp, wordsize)
+            regs[reg] = pending_frame.read_memory(sp, wordsize)
         return regs
 
-# FIXME
-GdbJitReader.register_jit_reader(x64_info())
+# FIXME - should register with the objfile (or wherever SpiderMonkey
+# pretty-printers go)
+if _have_unwinder:
+    gdb.unwinder.register_unwinder(None, x64_info())

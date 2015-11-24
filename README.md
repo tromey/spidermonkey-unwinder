@@ -22,14 +22,6 @@ GDB 7.10.
 The function name, and perhaps other information, will be displayed
 using a frame filter.
 
-# GDB
-
-Writing a jit symbol reader is a pain: the current gdb jit interface
-admits the possibility of reading symbols from the inferior.  However,
-this is done in response to some inferior event.  It would be much
-better if it were possible to read symbols on demand instead -- that
-is, in response to a user action in gdb.
-
 # To Do
 
 * Need a simple architecture abstraction to hold the register numbers
@@ -43,9 +35,10 @@ is, in response to a user action in gdb.
   the stack.  We can maybe stash it in `JSRuntime` in a special debug
   mode?  Something like this is done for exit frames, see
   `JSRuntime::jitTop`.  Basically we need either a frame descriptor
-  emitted by the JIT, or a frame pointer of some kind.  As a hack we
-  could require the user to use some `set` command and determine this
-  by hand.
+  emitted by the JIT, or a frame pointer of some kind.  Maybe
+  `ProfilingFrameIterator` would work for this.  As a hack we could
+  require the user to use some `set` command and determine this by
+  hand.
 
 * Need a type cache for some types in the unwinder.  There's one in
   the existing gdb scripts in js.

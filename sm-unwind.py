@@ -8,6 +8,7 @@ except ImportError:
 
 def debug(something):
     print(something)
+    pass
 
 # FIXME should come from a cache
 FRAMETYPE_MASK = (1 << gdb.parse_and_eval('js::jit::FRAMETYPE_BITS')) - 1
@@ -57,6 +58,9 @@ def compute_frame_size_map():
 # FIXME this should be on a cache somewhere
 frame_size_map = compute_frame_size_map()
 
+# FIXME another cache candidate.
+per_tls_data = gdb.lookup_global_symbol('js::TlsPerThreadData')
+
 class SpiderMonkeyFrameId(object):
     def __init__(self, sp, pc):
         self.sp = sp
@@ -69,9 +73,9 @@ class MockPendingFrame(object):
 
     def read_register(self, name):
         if self.frameid:
-            if name is 'pc':
+            if name is 'pc' or name is 'rip':
                 return self.frameid.pc
-            if name is 'sp':
+            if name is 'sp' or name is 'rsp':
                 return self.frameid.sp
             raise ValueError('did not mock %s' % name)
         return self.frame.read_register(name)
@@ -80,10 +84,11 @@ class MockPendingFrame(object):
         return MockPendingFrame(frame_id)
 
 class UnwinderState(object):
-    SP_REGISTER = 'sp'
-    PC_REGISTER = 'pc'
+    SP_REGISTER = 'rsp'
+    PC_REGISTER = 'rip'
 
     def __init__(self):
+        debug("@@ new UnwinderState")
         self.expected_sp = None
         self.activation = None
         self.jittop = None
@@ -96,7 +101,8 @@ class UnwinderState(object):
         return gdb.selected_thread() is self.thread
 
     def get_tls_per_thread_data(self):
-        return gdb.parse_and_eval('js::TlsPerThreadData.mValue')
+        global per_tls_data
+        return per_tls_data.value()['mValue']
 
     def unpack_descriptor(self, common):
         value = common['descriptor_']
@@ -148,7 +154,8 @@ class UnwinderState(object):
         # If some shared library claims this address, bail.  GDB
         # defers to our unwinder by default, but we don't really want
         # that kind of power.
-        if gdb.solib_name(pc) is not None:
+        if gdb.solib_name(int(pc)) is not None:
+            debug("@@ early exit: %s" % gdb.solib_name(int(pc)))
             return None
 
         sp = pending_frame.read_register(self.SP_REGISTER)
@@ -165,7 +172,7 @@ class SpiderMonkeyUnwinder(Unwinder):
     def __init__(self):
         super(SpiderMonkeyUnwinder, self).__init__("SpiderMonkey")
 
-    def __call__(pending_frame):
+    def __call__(self, pending_frame):
         global unwinder_state
         if unwinder_state is None or not unwinder_state.check():
             unwinder_state = UnwinderState()

@@ -12,6 +12,14 @@ Conceptually, there are two issues to be solved.  First, the raw
 unwinding -- teaching gdb how to work its way up through the frames.
 Second, displaying information about the frames.
 
+# SpiderMonkey Changes
+
+I would like to make this work without any SpiderMonkey changes.
+However, currently one change is needed -- I changed some
+`ThreadLocal` objects (all of them, but really only
+`js::TlsPerThreadData` is needed) to use `__thread`.  This avoids an
+inferior call during unwinding, which would be problematic.
+
 # Unwinding
 
 This work relies on the Python unwinding support that was added in

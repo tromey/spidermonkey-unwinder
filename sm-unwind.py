@@ -1,40 +1,20 @@
 import gdb
-import struct
-import itertools
-
-try:
-    import gdb.FrameDecorator
-    FrameDecorator = gdb.FrameDecorator.FrameDecorator
-except ImportError:
-    # We're not going to install the filter, but we still need a
-    # superclass.
-    FrameDecorator = object
 
 _have_unwinder = True
 try:
-    import gdb.unwinder
+    from gdb.unwinder import Unwinder
 except ImportError:
     _have_unwinder = False
 
-def get_pack_fmt(buffer)
-    if len(buffer) == 4:
-        fmt = 'I'
-    else:
-        # len == 8
-        fmt = 'L'
-    return fmt
+def debug(something):
+    print(something)
 
-def unpack_addr(reg_buffer):
-    return struct.unpack_from(get_pack_fmt(reg_buffer), reg_buffer)
-
+# FIXME should come from a cache
 FRAMETYPE_MASK = (1 << gdb.parse_and_eval('js::jit::FRAMETYPE_BITS')) - 1
 FRAMESIZE_SHIFT = gdb.parse_and_eval('js::jit::FRAMESIZE_SHIFT')
 
-CalleeTokenTagMask = 3  # also hard-coded in JS
-CalleeTokenMask = gdb.parse_and_eval('js::jit::CalleeTokenMask')
-
 # Must be in sync with JitFrames.cpp:SizeOfFramePrefix.
-# Maps frametype enum values to corresponding class.
+# Maps frametype enum base names to corresponding class.
 SizeOfFramePrefix = {
     'JitFrame_Entry': 'EntryFrameLayout',
 
@@ -47,261 +27,151 @@ SizeOfFramePrefix = {
     'JitFrame_BaselineStub': 'BaselineStubFrameLayout',
     'JitFrame_Unwound_BaselineStub': 'BaselineStubFrameLayout',
     
+    'JitFrame_IonStub': 'JitStubFrameLayout',
+    'JitFrame_Unwound_IonStub': 'JitStubFrameLayout',
+
     'JitFrame_Rectifier': 'RectifierFrameLayout',
 
     'JitFrame_Unwound_Rectifier': 'IonUnwoundRectifierFrameLayout',
 
     'JitFrame_Exit': 'ExitFrameLayout',
+    'JitFrame_LazyLink': 'ExitFrameLayout',
 
     'JitFrame_IonAccessorIC': 'IonAccessorICFrameLayout',
     'JitFrame_Unwound_IonAccessorIC': 'IonAccessorICFrameLayout',
 }
 
-
-def init_frame_type_map():
+# Compute map, indexed by a JitFrame value (an integer), whose
+# values are size of corresponding frame classes.
+def compute_frame_size_map():
+    global SizeOfFramePrefix
     t = gdb.lookup_type('enum js::jit::FrameType')
-    result = []
+    result = {}
     for field in t.fields():
-        result[field.enumval] = field.name
+        # Strip off "js::jit::".
+        name = field.name[9:]
+        class_type = gdb.lookup_type('js::jit::' + SizeOfFramePrefix[name])
+        result[int(field.enumval)] = class_type.sizeof
     return result
 
-# Array mapping frametype enum values to Frame objects.
-frameTypeMap = init_frame_type_map()
-
-# Any frame we discover will be represented by an instance of this
-# type.
-class Frame(object):
-    def __init__(self):
-        self.regs = []
-        self.basePC = None
-        self.name = None
-
-    def getRegisters(self):
-        return self.regs
-
-    def getFrameID(self):
-        return (self.basePC, self.regs[SP])
-
-    def getName(self):
-        return self.name
-
-    def setRegister(self, regno, val):
-        self.regs[regno] = val
-
-    def setName(self, name):
-        self.name = name
-
-    def setBasePC(self, basePC):
-        self.basePC = basePC
-
-# This is used to map a stack pointer to the name of the frame.  This
-# information is used by the frame filter at display time.
-class StackMap(object):
-    def __init__(self):
-        # FIXME this really ought to be per-thread.
-        self.spmap = {}
-
-    def record(self, frame):
-        self.spmap[frame.sp] = frame
-
-    def getFrame(self, sp):
-        return self.spmap[sp]
-
-# FIXME need intelligent lifetime management for this.
-currentStackMap = StackMap()
-
-class JitFrameDecorator(FrameDecorator):
-    def __init__(self, base, jitFrame):
-        super(JitFrameDecorator, self).__init__(self, base)
-        self.jitFrame = jitFrame
-
-    def function(self):
-        return self.jitFrame.getName()
-
-# FIXME - nothing instantiates this yet
-class JitFrameFilter(object):
-    def __init__(self, objfile):
-        self.name = 'SpiderMonkey JIT'
-        self.enabled = True
-        self.priority = 100
-        objfile.frame_filters[self.name] = self
-
-    def maybeWrapFrame(self, frame):
-        # FIXME
-        if frame.mumble in currentStackMap:
-            return JitFrameDecorator(frame, currentStackMap[frame.mumble])
-        return frame
-
-    def filter(self, frameIter):
-        return itertools.imap(self.maybeWrapFrame)
-
-def callee_token_to_script(token):
-    tag = long(token) & CalleeTokenTagMask
-    token = long(token) & CalleeTokenMask
-    # FIXME
-    # return Value(token).cast(gdb.lookup_type('js::JSScript').pointer())
-
-def unwind_ordinary(pc, pending_frame):
-    regs = []
-    sp = pending_frame.read_register(SP_REGNO)
-    fmt = get_pack_fmt(sp)
-    sp = struct.unpack_from(fmt, sp)
-    descriptor = struct.unpack_from(fmt, pending_frame.read_memory(sp, size))
-    regs[PC_REGNO] = pending_frame.read_memory(sp + size, size)
-    args_size = descriptor >> FRAMESIZE_SHIFT
-    frame_type = descriptor & FRAMETYPE_MASK
-    type_size = type_sizes[frame_type]
-    regs[SP_REGNO] = struct.pack(fmt, sp + args_size + type_size)
-    return regs
-
-# Cache the TlsPerThreadData key.  This is initialized once per run.
-# FIXME - how does this work?  Maybe recreate it on each stop with a
-# special case for the infcall we need?
-class CacheTlsKey(object):
-    def __init__(self):
-        # FIXME lang c++
-        self.mkey = gdb.parse_and_eval('js::TlsPerThreadData.mKey')
-        # Horrifying.  And quite hard to get nicely due to the need
-        # for an infcall.  It would be much better if we were using
-        # __thread instead, as gdb and glibc collude to make that
-        # usable.
-        ptd = gdb.parse_and_eval('__GI___pthread_getspecific(js::TlsPerThreadData.mKey)')
-        ptd = ptd.cast(gdb.lookup_type('PerThreadData').pointer())
-        self.jitTop = ptd['runtime']['jitTop']
-        self.activation = ptd['runtime']['jitActivation']
-
-    def getTop(self):
-        return self.jitTop
-
-    def getActivation(self):
-        return self.activation
-
-class ExitFrameState(object):
-    def __init__(self, mkeyCache):
-        self.activation = None
-        self.jittop = None
-        self.mkeyCache = mkeyCache
-        # FIXME lang c++
-        self.typeCommonFrameLayout = gdb.lookup_type('CommonFrameLayout')
-        self.typeExitFooterFrame = gdb.lookup_type('ExitFooterFrame')
-
-    # If this is an exit frame, return the new frame; or return None.
-    def is_exit_frame(self, sp, fp):
-        if self.activation == 0:
-            # Reached the end of the list.
-            return None
-        if self.activation is None:
-            top = self.mkeyCache.getTop()
-        else:
-            top = self.activation['prevJitTop_']
-        # If TOP appears between the SP and FP, then we have an exit
-        # frame.
-        if sp > top or top > fp:
-            return None
-        if self.activation is None:
-            self.activation = self.mkeyCache.getActivation()
-        else:
-            self.activation = self.activation['prevJitActivation_']
-        # FIXME - now use CommonFrameLayout and ExitFooterFrame info
-        # to make a new frame.
-        frame = Frame()
-        frame.setName('<<exit frame>>')
-        return frame
-
-###
-#
-# Handling exit frames
-# jitTop marks the most recent
-# to find this we need (ugh)
-# ((PerThreadData*) __GI___pthread_getspecific(0))->runtime_->jitTop
-# 0 == TlsPerThreadData.mKey
-# ... really should use __thread here!
-#
-# seemingly if $rsp < jitTop < $rbp
-# then we can assume we're seeing the exit frame
-#
-# then (CommonFrameLayout*) jittop
-# and (ExitFooterFrame*)(jittop - sizeof(ExitFooterFrame))
-# are useful
-#
-# to find the next exit frame, see JitActivation::prevJitTop_
-# and JitActivation::prevJitActivation_
-# there is also JSRuntime::jitActivation
-# which is the next pointer for the outermost activation
-#
-# these form a linked list terminated with 0/0
-#
-###
+# FIXME this should be on a cache somewhere
+frame_size_map = compute_frame_size_map()
 
 class SpiderMonkeyFrameId(object):
     def __init__(self, sp, pc):
         self.sp = sp
         self.pc = pc
 
-class SpiderMonkeyUnwinder(object):
-    enabled = True
-    name = 'SpiderMonkey'
+class MockPendingFrame(object):
+    def __init__(self, frameid = None):
+        self.frame = gdb.selected_frame()
+        self.frameid = frameid
 
-    def __call__(self, pending_frame):
-        # Probably don't need this with the new unwinder API?
-        # # If the PC belongs in some existing shared library, it can't
-        # # be ours.
-        # pc = unpack_addr(pending_frame.read_register(PC_REGNO))
-        # if gdb.solib_name(pc) is not None:
-        #     return None
+    def read_register(self, name):
+        if self.frameid:
+            if name is 'pc':
+                return self.frameid.pc
+            if name is 'sp':
+                return self.frameid.sp
+            raise ValueError('did not mock %s' % name)
+        return self.frame.read_register(name)
 
-        if self.is_trampoline(pc):
-            return self.unwind_trampoline(pc, pending_frame)
+    def create_unwind_info(self, frame_id):
+        return MockPendingFrame(frame_id)
 
-        return unwind_ordinary(pc, pending_frame)
+class UnwinderState(object):
+    SP_REGISTER = 'sp'
+    PC_REGISTER = 'pc'
+
+    def __init__(self):
+        self.expected_sp = None
+        self.activation = None
+        self.jittop = None
+        self.thread = gdb.selected_thread()
+        # FIXME cache
+        commonFrameLayout = gdb.lookup_type('js::jit::CommonFrameLayout')
+        self.typeCommonFrameLayoutPointer = commonFrameLayout.pointer()
+
+    def check(self):
+        return gdb.selected_thread() is self.thread
+
+    def get_tls_per_thread_data(self):
+        return gdb.parse_and_eval('js::TlsPerThreadData.mValue')
+
+    def unpack_descriptor(self, common):
+        value = common['descriptor_']
+        size = value >> FRAMESIZE_SHIFT
+        frame_type = value & FRAMETYPE_MASK
+        return (size, frame_type)
+
+    def sizeof_frame_type(self, frame_type):
+        global frame_size_map
+        return frame_size_map[int(frame_type)]
+
+    def unwind_ordinary(self, pc, sp, pending_frame):
+        debug("@@ unwind_ordinary")
+        common = sp.cast(self.typeCommonFrameLayoutPointer)
+        debug("@@ common = %s" % str(common.dereference()))
+        new_pc = common['returnAddress_']
+        debug("@@ new_pc = 0x%x" % new_pc)
+        (size, frame_type) = self.unpack_descriptor(common)
+        debug("@@ size, frame_type = %s" % str((int(size), int(frame_type))))
+        self.expected_sp = sp + size + self.sizeof_frame_type(frame_type)
+        debug("@@ expected_sp = 0x%x" % self.expected_sp)
+        frame_id = SpiderMonkeyFrameId(self.expected_sp, pc)
+        # FIXME - here is where we'd register the frame
+        # info for dissection in the frame filter
+        # FIXME it would be great to unwind any other registers here.
+        return pending_frame.create_unwind_info(frame_id)
+        
+    def unwind_exit_frame(self, pc, pending_frame):
+        debug("@@ unwind_exit_frame")
+        if self.activation == 0:
+            # Reached the end of the list.
+            self.expected_sp = None
+            return None
+        if self.activation is None:
+            ptd = self.get_tls_per_thread_data()
+            self.activation = ptd['runtime_']['jitActivation']
+            self.jittop = ptd['runtime_']['jitTop']
+        else:
+            self.jittop = self.activation['prevJitTop_']
+            self.activation = self.activation['prevJitActivation_']
+        debug("@@ jittop = 0x%x" % self.jittop)
+
+        # Now we can just fall into the ordinary case.
+        return self.unwind_ordinary(pc, self.jittop, pending_frame)
 
     def unwind(self, pending_frame):
-        frame = self.exitFrame.is_exit_frame(sp, fp)
-        if not frame:
-            frame = self.is_entry(pc, pending_frame)
-        if not frame:
-            frame = self.is_ordinary(pc, pending_frame)
-        if not frame:
+        pc = pending_frame.read_register(self.PC_REGISTER)
+
+        # If some shared library claims this address, bail.  GDB
+        # defers to our unwinder by default, but we don't really want
+        # that kind of power.
+        if gdb.solib_name(pc) is not None:
             return None
-        self.mostRecentFrame = frame
-        currentStackMap.record(frame)
-        return frame.getRegisters()
 
-    def get_frame_id(self, pending_frame):
-        return self.mostRecentFrame.getFrameID()
-        # sp = pending_frame.read_register(SP_REGISTER)
-        # fmt = read_register(sp)
-        # sp = struct.unpack_from(fmt, sp)
-        # descriptor = struct.unpack_from(fmt, pending_frame.read_memory(sp, size))
-        # # FIXME find start of function
-        # pc = struct.unpack_from(fmt, pending_frame.read_memory(sp + size, size))
-        # return (pc, sp)
+        sp = pending_frame.read_register(self.SP_REGISTER)
+        if sp == self.expected_sp:
+            return self.unwind_ordinary(pc, sp, pending_frame)
+        # Maybe we've found an exit frame.  FIXME I currently don't
+        # know how to identify these precisely, so we'll just hope for
+        # the time being.
+        return self.unwind_exit_frame(pc, pending_frame)
 
-class x64_info(SpiderMonkeyUnwinder):
-    SP_REGISTER = "rsp"
-    PC_REGISTER = "rip"
+unwinder_state = None
 
-    # FIXME define other registers here.
+class SpiderMonkeyUnwinder(Unwinder):
+    def __init__(self):
+        super(SpiderMonkeyUnwinder, self).__init__("SpiderMonkey")
 
-    def is_trampoline(self, pc):
-        # FIXME - we need special handling for trampoline frames
-        # this is just JitRuntime:: enterJIT_ and enterBaselineJIT_
-        # Maybe this can move to the base class
-        return False
-
-    def unwind_trampoline(self, pc, pending_frame):
-        sp = pending_frame.read_register(SP_REGISTER)
-        wordsize = len(sp)
-        sp = unpack_addr(sp)
-        regs = []
-        # Must be in sync with Trampoline-x64.cpp:generateEnterJIT.
-        pushed_regs = ["rbp", "rbx", "r12", "r13", "r14", "r15"]
-        for reg in pushed_regs:
-            sp = sp - wordsize
-            regs[reg] = pending_frame.read_memory(sp, wordsize)
-        return regs
+    def __call__(pending_frame):
+        global unwinder_state
+        if unwinder_state is None or not unwinder_state.check():
+            unwinder_state = UnwinderState()
+        return unwinder_state.unwind(pending_frame)
 
 # FIXME - should register with the objfile (or wherever SpiderMonkey
 # pretty-printers go)
 if _have_unwinder:
-    gdb.unwinder.register_unwinder(None, x64_info())
+    gdb.unwinder.register_unwinder(None, SpiderMonkeyUnwinder())

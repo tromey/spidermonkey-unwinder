@@ -67,6 +67,10 @@ class SpiderMonkeyFrameId(object):
         self.pc = pc
 
 class UnwinderState(object):
+    # We have to use the arch-specific register names.
+    # See https://sourceware.org/bugzilla/show_bug.cgi?id=19286
+    # FIXME this means we need per-arch subclasses of UnwinderState.
+    # (But we need that anyway for trampoline frames)
     SP_REGISTER = 'rsp'
     PC_REGISTER = 'rip'
 
@@ -113,6 +117,7 @@ class UnwinderState(object):
         # FIXME it would be great to unwind any other registers here.
         unwind_info = pending_frame.create_unwind_info(frame_id)
         # gdb mysteriously doesn't do this automatically.
+        # See https://sourceware.org/bugzilla/show_bug.cgi?id=19287
         debug("@@ ?? 0x%x 0x%x" % (frame_id.pc, frame_id.sp))
         unwind_info.add_saved_register(self.PC_REGISTER, frame_id.pc)
         unwind_info.add_saved_register(self.SP_REGISTER, frame_id.sp)
@@ -142,6 +147,8 @@ class UnwinderState(object):
         # If some shared library claims this address, bail.  GDB
         # defers to our unwinder by default, but we don't really want
         # that kind of power.
+        # FIXME this does not actually work
+        # See https://sourceware.org/bugzilla/show_bug.cgi?id=19288
         if gdb.solib_name(int(pc)) is not None:
             debug("@@ early exit: %s" % gdb.solib_name(int(pc)))
             return None

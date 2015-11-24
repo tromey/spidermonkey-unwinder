@@ -51,12 +51,6 @@ using a frame filter.
 * Need a type cache for some types in the unwinder.  There's one in
   the existing gdb scripts in js.
 
-* We may need to keep some state to handle exit frames properly.  Only
-  the newest SP is held in `jitTop`; the rest are in a list of
-  `JitActivation` objects.  In this case we can cache the state by
-  thread; and clear the entire cache whenever `gdb.events.cont` emits
-  an event.
-
 * It would be really good to be able to find all the saved registers
   in ordinary JIT frames.  I'm not sure if this is reasonably possible.
 

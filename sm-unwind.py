@@ -171,7 +171,13 @@ class SpiderMonkeyUnwinder(Unwinder):
             unwinder_state = UnwinderState()
         return unwinder_state.unwind(pending_frame)
 
+def invalidate_unwinder_state(*args, **kwargs):
+    unwinder_state = None
+
 # FIXME - should register with the objfile (or wherever SpiderMonkey
 # pretty-printers go)
 if _have_unwinder:
+    # We need to invalidate the unwinder state whenever the inferior
+    # starts executing.  This avoids having a stale cache.
+    gdb.events.cont.connect(invalidate_unwinder_state)
     gdb.unwinder.register_unwinder(None, SpiderMonkeyUnwinder())

@@ -97,23 +97,28 @@ class UnwinderState(object):
         global frame_size_map
         return frame_size_map[int(frame_type)]
 
-    def unwind_ordinary(self, pc, sp, pending_frame):
+    def unwind_ordinary(self, sp, pending_frame):
         debug("@@ unwind_ordinary")
         common = sp.cast(self.typeCommonFrameLayoutPointer)
         debug("@@ common = %s" % str(common.dereference()))
         new_pc = common['returnAddress_']
         debug("@@ new_pc = 0x%x" % new_pc)
         (size, frame_type) = self.unpack_descriptor(common)
-        debug("@@ size, frame_type = %s" % str((int(size), int(frame_type))))
+        debug("@@ size, fixed size, frame_type = %s" % str((int(size), self.sizeof_frame_type(frame_type), int(frame_type))))
         self.expected_sp = sp + size + self.sizeof_frame_type(frame_type)
         debug("@@ expected_sp = 0x%x" % self.expected_sp)
-        frame_id = SpiderMonkeyFrameId(self.expected_sp, pc)
+        frame_id = SpiderMonkeyFrameId(self.expected_sp, new_pc)
         # FIXME - here is where we'd register the frame
         # info for dissection in the frame filter
         # FIXME it would be great to unwind any other registers here.
-        return pending_frame.create_unwind_info(frame_id)
+        unwind_info = pending_frame.create_unwind_info(frame_id)
+        # gdb mysteriously doesn't do this automatically.
+        debug("@@ ?? 0x%x 0x%x" % (frame_id.pc, frame_id.sp))
+        unwind_info.add_saved_register(self.PC_REGISTER, frame_id.pc)
+        unwind_info.add_saved_register(self.SP_REGISTER, frame_id.sp)
+        return unwind_info
         
-    def unwind_exit_frame(self, pc, pending_frame):
+    def unwind_exit_frame(self, pending_frame):
         debug("@@ unwind_exit_frame")
         if self.activation == 0:
             # Reached the end of the list.
@@ -129,7 +134,7 @@ class UnwinderState(object):
         debug("@@ jittop = 0x%x" % self.jittop)
 
         # Now we can just fall into the ordinary case.
-        return self.unwind_ordinary(pc, self.jittop, pending_frame)
+        return self.unwind_ordinary(self.jittop, pending_frame)
 
     def unwind(self, pending_frame):
         pc = pending_frame.read_register(self.PC_REGISTER)
@@ -143,11 +148,11 @@ class UnwinderState(object):
 
         sp = pending_frame.read_register(self.SP_REGISTER)
         if sp == self.expected_sp:
-            return self.unwind_ordinary(pc, sp, pending_frame)
+            return self.unwind_ordinary(sp, pending_frame)
         # Maybe we've found an exit frame.  FIXME I currently don't
         # know how to identify these precisely, so we'll just hope for
         # the time being.
-        return self.unwind_exit_frame(pc, pending_frame)
+        return self.unwind_exit_frame(pending_frame)
 
 unwinder_state = None
 

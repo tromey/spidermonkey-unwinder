@@ -42,21 +42,27 @@ SizeOfFramePrefix = {
     'JitFrame_Unwound_IonAccessorIC': 'IonAccessorICFrameLayout',
 }
 
+frame_enum_values = None
+frame_size_map = None
+
 # Compute map, indexed by a JitFrame value (an integer), whose
 # values are size of corresponding frame classes.
+# FIXME caching
 def compute_frame_size_map():
     global SizeOfFramePrefix
+    global frame_size_map
+    global frame_enum_values
     t = gdb.lookup_type('enum js::jit::FrameType')
-    result = {}
+    frame_size_map = {}
+    frame_enum_values = {}
     for field in t.fields():
         # Strip off "js::jit::".
         name = field.name[9:]
         class_type = gdb.lookup_type('js::jit::' + SizeOfFramePrefix[name])
-        result[int(field.enumval)] = class_type.sizeof
-    return result
+        frame_enum_values[name] = int(field.enumval)
+        frame_size_map[int(field.enumval)] = class_type.sizeof
 
-# FIXME this should be on a cache somewhere
-frame_size_map = compute_frame_size_map()
+compute_frame_size_map()
 
 # FIXME another cache candidate.
 per_tls_data = gdb.lookup_global_symbol('js::TlsPerThreadData')
@@ -76,6 +82,7 @@ class UnwinderState(object):
 
     def __init__(self):
         debug("@@ new UnwinderState")
+        global frame_enum_values
         self.expected_sp = None
         self.activation = None
         self.jittop = None
@@ -108,9 +115,11 @@ class UnwinderState(object):
         new_pc = common['returnAddress_']
         debug("@@ new_pc = 0x%x" % new_pc)
         (size, frame_type) = self.unpack_descriptor(common)
-        debug("@@ size, fixed size, frame_type = %s" % str((int(size), self.sizeof_frame_type(frame_type), int(frame_type))))
-        self.expected_sp = sp + size + self.sizeof_frame_type(frame_type)
-        debug("@@ expected_sp = 0x%x" % self.expected_sp)
+        this_frame_type = self.next_type
+        self.next_type = frame_type
+        debug("@@ size, fixed size, frame_type = %s" % str((int(size), self.sizeof_frame_type(this_frame_type), int(this_frame_type))))
+        self.expected_sp = sp + size + self.sizeof_frame_type(this_frame_type)
+        debug("@@ expected_sp = 0x%x, next frame type = %d" % (self.expected_sp, self.next_type))
         frame_id = SpiderMonkeyFrameId(self.expected_sp, new_pc)
         # FIXME - here is where we'd register the frame
         # info for dissection in the frame filter
@@ -139,6 +148,7 @@ class UnwinderState(object):
         debug("@@ jittop = 0x%x" % self.jittop)
 
         # Now we can just fall into the ordinary case.
+        self.next_type = frame_enum_values['JitFrame_Exit']
         return self.unwind_ordinary(self.jittop, pending_frame)
 
     def unwind(self, pending_frame):
@@ -149,7 +159,7 @@ class UnwinderState(object):
         # that kind of power.
         # FIXME this does not actually work
         # See https://sourceware.org/bugzilla/show_bug.cgi?id=19288
-        if gdb.solib_name(int(pc)) is not None:
+        if gdb.text_address_claimed(int(pc)):
             debug("@@ early exit: %s" % gdb.solib_name(int(pc)))
             return None
 

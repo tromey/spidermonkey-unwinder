@@ -44,6 +44,7 @@ SizeOfFramePrefix = {
 
 frame_enum_values = None
 frame_size_map = None
+frame_enum_names = None
 
 # Compute map, indexed by a JitFrame value (an integer), whose
 # values are size of corresponding frame classes.
@@ -52,14 +53,17 @@ def compute_frame_size_map():
     global SizeOfFramePrefix
     global frame_size_map
     global frame_enum_values
+    global frame_enum_names
     t = gdb.lookup_type('enum js::jit::FrameType')
     frame_size_map = {}
     frame_enum_values = {}
+    frame_enum_names = {}
     for field in t.fields():
         # Strip off "js::jit::".
         name = field.name[9:]
         class_type = gdb.lookup_type('js::jit::' + SizeOfFramePrefix[name])
         frame_enum_values[name] = int(field.enumval)
+        frame_enum_names[int(field.enumval)] = name
         frame_size_map[int(field.enumval)] = class_type.sizeof
 
 compute_frame_size_map()
@@ -117,7 +121,8 @@ class UnwinderState(object):
         (size, frame_type) = self.unpack_descriptor(common)
         this_frame_type = self.next_type
         self.next_type = frame_type
-        debug("@@ size, fixed size, frame_type = %s" % str((int(size), self.sizeof_frame_type(this_frame_type), int(this_frame_type))))
+        global frame_enum_names
+        debug("@@ size, fixed size, frame_type = %s" % str((int(size), self.sizeof_frame_type(this_frame_type), int(this_frame_type), frame_enum_names[int(this_frame_type)])))
         self.expected_sp = sp + size + self.sizeof_frame_type(this_frame_type)
         debug("@@ expected_sp = 0x%x, next frame type = %d" % (self.expected_sp, self.next_type))
         frame_id = SpiderMonkeyFrameId(self.expected_sp, new_pc)
@@ -133,16 +138,18 @@ class UnwinderState(object):
         return unwind_info
         
     def unwind_exit_frame(self, pending_frame):
-        debug("@@ unwind_exit_frame")
         if self.activation == 0:
+            debug("@@ unwind_exit_frame: end")
             # Reached the end of the list.
             self.expected_sp = None
             return None
         if self.activation is None:
+            debug("@@ unwind_exit_frame: first")
             ptd = self.get_tls_per_thread_data()
             self.activation = ptd['runtime_']['jitActivation']
             self.jittop = ptd['runtime_']['jitTop']
         else:
+            debug("@@ unwind_exit_frame: next")
             self.jittop = self.activation['prevJitTop_']
             self.activation = self.activation['prevJitActivation_']
         debug("@@ jittop = 0x%x" % self.jittop)

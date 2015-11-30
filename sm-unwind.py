@@ -89,8 +89,7 @@ class UnwinderState(object):
         debug("@@ new UnwinderState")
         global frame_enum_values
         self.next_sp = None
-        self.entry_expected = False
-        # self.next_type = None
+        self.next_type = None
         self.activation = None
         self.thread = gdb.selected_thread()
         # FIXME cache
@@ -119,11 +118,10 @@ class UnwinderState(object):
         common = sp.cast(self.typeCommonFrameLayoutPointer)
         debug("@@ common = %s" % str(common.dereference()))
         new_pc = common['returnAddress_']
-        (size, frame_type) = self.unpack_descriptor(common)
-        # self.next_type = frame_type
+        frame_type = self.next_type
+        (size, self.next_type) = self.unpack_descriptor(common)
         debug("@@ type = %s" % frame_enum_names[frame_type])
         self.next_sp = sp + size + self.sizeof_frame_type(frame_type)
-        self.entry_expected = frame_type == frame_enum_values['JitFrame_Exit']
         frame_id = SpiderMonkeyFrameId(sp, new_pc)
         # FIXME - here is where we'd register the frame
         # info for dissection in the frame filter
@@ -157,7 +155,7 @@ class UnwinderState(object):
         debug("@@ jittop = 0x%x" % jittop)
 
         # Now we can just fall into the ordinary case.
-        # self.next_type = frame_enum_values['JitFrame_Exit']
+        self.next_type = frame_enum_values['JitFrame_Exit']
         return self.create_frame(jittop, pending_frame)
 
     def unwind(self, pending_frame):
@@ -173,11 +171,10 @@ class UnwinderState(object):
             return None
 
         if self.next_sp is not None:
-            if self.entry_expected:
+            if self.next_type == frame_enum_values['JitFrame_Entry']:
                 result = self.unwind_entry_frame(self.next_sp, pending_frame)
                 self.next_sp = None
-                self.entry_expected = False
-                # self.next_type = None
+                self.next_type = None
                 return result
             return self.unwind_ordinary(pending_frame)
         # Maybe we've found an exit frame.  FIXME I currently don't
@@ -206,9 +203,11 @@ class x64UnwinderState(UnwinderState):
         # Get the return address from the previous frame.
         sp = sp + wordsize
         for reg in self.PUSHED_REGS:
+            
             data = gdb.selected_inferior().read_memory(sp, wordsize)
-            data = struct.unpack_from('<p', data)
+            data = struct.unpack_from('<Q', data)[0]
             sp = sp - wordsize
+            debug("@@ unwinding %s => 0x%x" % (reg, data))
             regs[reg] = data
         frame_id = SpiderMonkeyFrameId(regs[self.SP_REGISTER],
                                        regs[self.PC_REGISTER])

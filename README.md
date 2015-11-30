@@ -44,6 +44,9 @@ See https://bugzilla.mozilla.org/show_bug.cgi?id=757969
 
 # To Do
 
+* Filters and unwinders are registered globally; but when this is
+  merged into SpiderMonkey we can fix that up
+
 * Need a simple architecture abstraction to hold the register numbers
   and any other per-arch bits
 

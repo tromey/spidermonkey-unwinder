@@ -82,13 +82,15 @@ class SpiderMonkeyFrameId(object):
 class UnwinderState(object):
     # We have to use the arch-specific register names.
     # See https://sourceware.org/bugzilla/show_bug.cgi?id=19286
-    # So each subclass must define SP_REGISTER and PC_REGISTER.
+    # So, each subclass must define SP_REGISTER and PC_REGISTER and
+    # implement unwind_entry_frame.
 
     def __init__(self):
         debug("@@ new UnwinderState")
         global frame_enum_values
         self.next_sp = None
-        self.next_type = None
+        self.entry_expected = False
+        # self.next_type = None
         self.activation = None
         self.thread = gdb.selected_thread()
         # FIXME cache
@@ -104,24 +106,24 @@ class UnwinderState(object):
 
     def unpack_descriptor(self, common):
         value = common['descriptor_']
-        size = value >> FRAMESIZE_SHIFT
-        frame_type = value & FRAMETYPE_MASK
+        size = int(value >> FRAMESIZE_SHIFT)
+        frame_type = int(value & FRAMETYPE_MASK)
         return (size, frame_type)
 
     def sizeof_frame_type(self, frame_type):
         global frame_size_map
-        return frame_size_map[int(frame_type)]
+        return frame_size_map[frame_type]
 
     def create_frame(self, sp, pending_frame):
+        global frame_enum_names
         common = sp.cast(self.typeCommonFrameLayoutPointer)
         debug("@@ common = %s" % str(common.dereference()))
         new_pc = common['returnAddress_']
-        this_frame_type = self.next_type
         (size, frame_type) = self.unpack_descriptor(common)
-        self.next_type = frame_type
-        global frame_enum_names
-        debug("@@ type = %s" % frame_enum_names[int(this_frame_type)])
-        self.next_sp = sp + size + self.sizeof_frame_type(this_frame_type)
+        # self.next_type = frame_type
+        debug("@@ type = %s" % frame_enum_names[frame_type])
+        self.next_sp = sp + size + self.sizeof_frame_type(frame_type)
+        self.entry_expected = frame_type == frame_enum_values['JitFrame_Exit']
         frame_id = SpiderMonkeyFrameId(sp, new_pc)
         # FIXME - here is where we'd register the frame
         # info for dissection in the frame filter
@@ -155,7 +157,7 @@ class UnwinderState(object):
         debug("@@ jittop = 0x%x" % jittop)
 
         # Now we can just fall into the ordinary case.
-        self.next_type = frame_enum_values['JitFrame_Exit']
+        # self.next_type = frame_enum_values['JitFrame_Exit']
         return self.create_frame(jittop, pending_frame)
 
     def unwind(self, pending_frame):
@@ -170,14 +172,12 @@ class UnwinderState(object):
             debug("@@ early exit: %s" % gdb.solib_name(int(pc)))
             return None
 
-        sp = pending_frame.read_register(self.SP_REGISTER)
         if self.next_sp is not None:
-            global frame_enum_values
-            if self.next_type == frame_enum_values['JitFrame_Entry']:
+            if self.entry_expected:
                 result = self.unwind_entry_frame(self.next_sp, pending_frame)
-                # FIXME go to the next activation here
                 self.next_sp = None
-                self.next_type = None
+                self.entry_expected = False
+                # self.next_type = None
                 return result
             return self.unwind_ordinary(pending_frame)
         # Maybe we've found an exit frame.  FIXME I currently don't
@@ -190,26 +190,31 @@ class x64UnwinderState(UnwinderState):
     # (But we need that anyway for trampoline frames)
     SP_REGISTER = 'rsp'
     PC_REGISTER = 'rip'
-    # Must be in sync with Trampoline-x64.cpp:generateEnterJIT.
-    PUSHED_REGS = ["rbp", "rbx", "r12", "r13", "r14", "r15"]
+    # Must be in sync with Trampoline-x64.cpp:generateEnterJIT.  Note
+    # that rip isn't pushed there explicitly, but rather by the
+    # previous function's call.
+    PUSHED_REGS = ["rip", "rbp", "rbx", "r12", "r13", "r14", "r15"]
 
     def unwind_entry_frame(self, sp, pending_frame):
         debug("@@ unwind_entry_frame")
-        common = sp.cast(self.typeCommonFrameLayoutPointer)
-        debug("@@ common = %s" % str(common.dereference()))
-        new_pc = common['returnAddress_']
-        (size, _ignore) = self.unpack_descriptor(common)
-        sp = sp + size + self.sizeof_frame_type(self.next_type)
         wordsize = 8
-        frame_id = SpiderMonkeyFrameId(sp, new_pc)
-        unwind_info = pending_frame.create_unwind_info(frame_id)
-        unwind_info.add_saved_register(self.PC_REGISTER, frame_id.pc)
-        unwind_info.add_saved_register(self.SP_REGISTER, frame_id.sp)
+        # It is a bit weird but we have to unwind the registers first,
+        # then create the frame id.  So we have to stash the registers
+        # in a temporary dictionary here.
+        regs = {}
+        regs[self.SP_REGISTER] = sp
+        # Get the return address from the previous frame.
+        sp = sp + wordsize
         for reg in self.PUSHED_REGS:
             data = gdb.selected_inferior().read_memory(sp, wordsize)
             data = struct.unpack_from('<p', data)
             sp = sp - wordsize
-            unwind_info.add_saved_register(reg, data)
+            regs[reg] = data
+        frame_id = SpiderMonkeyFrameId(regs[self.SP_REGISTER],
+                                       regs[self.PC_REGISTER])
+        unwind_info = pending_frame.create_unwind_info(frame_id)
+        for reg in self.PUSHED_REGS:
+            unwind_info.add_saved_register(reg, regs[reg])
         return unwind_info
 
 unwinder_state = None

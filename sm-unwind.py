@@ -210,7 +210,7 @@ class x64UnwinderState(UnwinderState):
         frame_id = SpiderMonkeyFrameId(regs[self.SP_REGISTER],
                                        regs[self.PC_REGISTER])
         unwind_info = pending_frame.create_unwind_info(frame_id)
-        for reg in self.PUSHED_REGS:
+        for reg in regs:
             unwind_info.add_saved_register(reg, regs[reg])
         return unwind_info
 

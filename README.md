@@ -20,10 +20,15 @@ However, currently one change is needed -- I changed some
 `js::TlsPerThreadData` is needed) to use `__thread`.  This avoids an
 inferior call during unwinding, which would be problematic.
 
+See https://bugzilla.mozilla.org/show_bug.cgi?id=757969
+
 # Unwinding
 
-This work relies on the Python unwinding support that was added in
-GDB 7.10.
+This work relies on the Python unwinding support that was added in GDB
+7.10.  It also needs a way to tell whether a given PC is already
+covered by some existing object.
+
+See https://sourceware.org/bugzilla/show_bug.cgi?id=19288
 
 # Display
 

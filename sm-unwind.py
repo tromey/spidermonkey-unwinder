@@ -1,5 +1,5 @@
 import gdb
-import struct
+from gdb.FrameDecorator import FrameDecorator
 
 _have_unwinder = True
 try:
@@ -74,6 +74,33 @@ compute_frame_size_map()
 # FIXME another cache candidate.
 per_tls_data = gdb.lookup_global_symbol('js::TlsPerThreadData')
 
+class JitFrameDecorator(FrameDecorator):
+    def __init__(self, base, info):
+        super(JitFrameDecorator, self).__init__(base)
+        self.info = info
+
+    def function(self):
+        if "name" in self.info:
+            return "<<" + self.info["name"] + ">>"
+        return FrameDecorator.function(self)
+
+class JitFrameFilter(object):
+    name = "SpiderMonkey"
+    enabled = True
+    priority = 100
+
+    def maybe_wrap_frame(self, frame):
+        if unwinder_state is None:
+            return frame
+        base = frame.inferior_frame()
+        info = unwinder_state.get_frame(base)
+        if info is None:
+            return frame
+        return JitFrameDecorator(frame, info)
+
+    def filter(self, frame_iter):
+        return map(self.maybe_wrap_frame, frame_iter)
+
 class SpiderMonkeyFrameId(object):
     def __init__(self, sp, pc):
         self.sp = sp
@@ -92,9 +119,19 @@ class UnwinderState(object):
         self.next_type = None
         self.activation = None
         self.thread = gdb.selected_thread()
+        self.frame_map = {}
         # FIXME cache
         commonFrameLayout = gdb.lookup_type('js::jit::CommonFrameLayout')
         self.typeCommonFrameLayoutPointer = commonFrameLayout.pointer()
+
+    def get_frame(self, frame):
+        sp = int(frame.read_register(self.SP_REGISTER))
+        if sp in self.frame_map:
+            return self.frame_map[sp]
+        return None
+
+    def add_frame(self, sp, dictionary):
+        self.frame_map[int(sp)] = dictionary
 
     def check(self):
         return gdb.selected_thread() is self.thread
@@ -114,7 +151,6 @@ class UnwinderState(object):
         return frame_size_map[frame_type]
 
     def create_frame(self, sp, pending_frame):
-        global frame_enum_names
         common = sp.cast(self.typeCommonFrameLayoutPointer)
         debug("@@ common = 0x%x : %s" % (int(sp), str(common.dereference())))
         new_pc = common['returnAddress_']
@@ -130,8 +166,8 @@ class UnwinderState(object):
             frame_size = self.sizeof_frame_type(frame_type)
         self.next_sp = sp + size + frame_size
         frame_id = SpiderMonkeyFrameId(sp, new_pc)
-        # FIXME - here is where we'd register the frame
-        # info for dissection in the frame filter
+        # Register this frame so the frame filter can find it.
+        self.add_frame(sp, { "name": frame_enum_names[self.next_type] })
         # FIXME it would be great to unwind any other registers here.
         unwind_info = pending_frame.create_unwind_info(frame_id)
         # gdb mysteriously doesn't do this automatically.
@@ -160,6 +196,9 @@ class UnwinderState(object):
             jittop = self.activation['prevJitTop_']
             self.activation = self.activation['prevJitActivation_']
         debug("@@ jittop = 0x%x" % jittop)
+
+        exit_sp = pending_frame.read_register(self.SP_REGISTER)
+        self.add_frame(exit_sp, { "name": "JitFrame_Exit" })
 
         # Now we can just fall into the ordinary case.
         self.next_type = frame_enum_values['JitFrame_Exit']
@@ -247,3 +286,5 @@ if _have_unwinder:
     # starts executing.  This avoids having a stale cache.
     gdb.events.cont.connect(invalidate_unwinder_state)
     gdb.unwinder.register_unwinder(None, SpiderMonkeyUnwinder())
+    filt = JitFrameFilter()
+    gdb.frame_filters[filt.name] = filt

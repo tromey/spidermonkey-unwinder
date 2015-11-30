@@ -11,6 +11,13 @@ Conceptually, there are two issues to be solved.  First, the raw
 unwinding -- teaching gdb how to work its way up through the frames.
 Second, displaying information about the frames.
 
+# Requirements
+
+See below for requirements.  Currently patches to both gdb and
+SpiderMonkey are needed; ask me about them.  Also, this was written
+using a gdb built with Python 3 -- it can be ported to Python 2 but I
+have not done so.
+
 # Unwinding
 
 This work relies on the Python unwinding support that was added in GDB
@@ -21,8 +28,9 @@ See https://sourceware.org/bugzilla/show_bug.cgi?id=19288
 
 # Display
 
-The function name, and perhaps other information, will be displayed
-using a frame filter.
+The function name, and perhaps other information, are displayed using
+a frame filter.  Currently this just shows the frame type, but not the
+name or anything else.
 
 # SpiderMonkey Changes
 

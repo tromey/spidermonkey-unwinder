@@ -194,20 +194,18 @@ class x64UnwinderState(UnwinderState):
 
     def unwind_entry_frame(self, sp, pending_frame):
         debug("@@ unwind_entry_frame")
-        wordsize = 8
-        # It is a bit weird but we have to unwind the registers first,
-        # then create the frame id.  So we have to stash the registers
-        # in a temporary dictionary here.
+        void_starstar = gdb.lookup_type('void').pointer().pointer()
+        sp = sp.cast(void_starstar)
+        # We have to unwind the registers first, then create the frame
+        # id.  So we have to stash the registers in a temporary
+        # dictionary here.
         regs = {}
         regs[self.SP_REGISTER] = sp
         # Get the return address from the previous frame.
-        sp = sp + wordsize
+        sp = sp + 1
         for reg in self.PUSHED_REGS:
-            
-            data = gdb.selected_inferior().read_memory(sp, wordsize)
-            data = struct.unpack_from('<Q', data)[0]
-            sp = sp - wordsize
-            debug("@@ unwinding %s => 0x%x" % (reg, data))
+            data = sp.dereference()
+            sp = sp - 1
             regs[reg] = data
         frame_id = SpiderMonkeyFrameId(regs[self.SP_REGISTER],
                                        regs[self.PC_REGISTER])

@@ -1,8 +1,7 @@
 # Intro
 
-This is a gdb JIT unwinder for SpiderMonkey.
-
-It does not work yet.
+This is a gdb JIT unwinder for SpiderMonkey.  It can unwind at least
+baseline frames, plus their entries and exits.
 
 SpiderMonkey's JIT compilers emit code at runtime that cannot be
 unwound by gdb.  So, for example `bt` does not work properly.  This
@@ -11,16 +10,6 @@ code attempts to fix this problem.
 Conceptually, there are two issues to be solved.  First, the raw
 unwinding -- teaching gdb how to work its way up through the frames.
 Second, displaying information about the frames.
-
-# SpiderMonkey Changes
-
-I would like to make this work without any SpiderMonkey changes.
-However, currently one change is needed -- I changed some
-`ThreadLocal` objects (all of them, but really only
-`js::TlsPerThreadData` is needed) to use `__thread`.  This avoids an
-inferior call during unwinding, which would be problematic.
-
-See https://bugzilla.mozilla.org/show_bug.cgi?id=757969
 
 # Unwinding
 
@@ -34,6 +23,16 @@ See https://sourceware.org/bugzilla/show_bug.cgi?id=19288
 
 The function name, and perhaps other information, will be displayed
 using a frame filter.
+
+# SpiderMonkey Changes
+
+I would like to make this work without any SpiderMonkey changes.
+However, currently one change is needed -- I changed some
+`ThreadLocal` objects (all of them, but really only
+`js::TlsPerThreadData` is needed) to use `__thread`.  This avoids an
+inferior call during unwinding, which would be problematic.
+
+See https://bugzilla.mozilla.org/show_bug.cgi?id=757969
 
 # To Do
 

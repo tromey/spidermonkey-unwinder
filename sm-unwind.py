@@ -10,7 +10,7 @@ except ImportError:
     Unwinder = object
 
 def debug(something):
-    print(something)
+    # print(something)
     pass
 
 # FIXME should come from a cache
@@ -116,12 +116,19 @@ class UnwinderState(object):
     def create_frame(self, sp, pending_frame):
         global frame_enum_names
         common = sp.cast(self.typeCommonFrameLayoutPointer)
-        debug("@@ common = %s" % str(common.dereference()))
+        debug("@@ common = 0x%x : %s" % (int(sp), str(common.dereference())))
         new_pc = common['returnAddress_']
         frame_type = self.next_type
         (size, self.next_type) = self.unpack_descriptor(common)
         debug("@@ type = %s" % frame_enum_names[frame_type])
-        self.next_sp = sp + size + self.sizeof_frame_type(frame_type)
+        if self.next_type == frame_enum_values['JitFrame_Entry']:
+            # For the entry frame we don't look at the size of the
+            # EntryFrameLayout, but rather CommonFrameLayout.  This
+            # matches what the code in generateEnterJIT does.
+            frame_size = self.typeCommonFrameLayoutPointer.target().sizeof
+        else:
+            frame_size = self.sizeof_frame_type(frame_type)
+        self.next_sp = sp + size + frame_size
         frame_id = SpiderMonkeyFrameId(sp, new_pc)
         # FIXME - here is where we'd register the frame
         # info for dissection in the frame filter
@@ -190,27 +197,31 @@ class x64UnwinderState(UnwinderState):
     # Must be in sync with Trampoline-x64.cpp:generateEnterJIT.  Note
     # that rip isn't pushed there explicitly, but rather by the
     # previous function's call.
-    PUSHED_REGS = ["rip", "rbp", "rbx", "r12", "r13", "r14", "r15"]
+    PUSHED_REGS = ["r15", "r14", "r13", "r12", "rbx", "rbp", "rip"]
 
     def unwind_entry_frame(self, sp, pending_frame):
         debug("@@ unwind_entry_frame")
+        debug("@@ entry sp = 0x%x" % int(sp))
         void_starstar = gdb.lookup_type('void').pointer().pointer()
         sp = sp.cast(void_starstar)
         # We have to unwind the registers first, then create the frame
         # id.  So we have to stash the registers in a temporary
         # dictionary here.
         regs = {}
-        regs[self.SP_REGISTER] = sp
-        # Get the return address from the previous frame.
+        # Skip the "result" push.
         sp = sp + 1
         for reg in self.PUSHED_REGS:
             data = sp.dereference()
-            sp = sp - 1
+            sp = sp + 1
             regs[reg] = data
+            if reg is "rbp":
+                regs[self.SP_REGISTER] = sp
         frame_id = SpiderMonkeyFrameId(regs[self.SP_REGISTER],
                                        regs[self.PC_REGISTER])
         unwind_info = pending_frame.create_unwind_info(frame_id)
+        debug("@@ sym @ %s" % str(regs[self.PC_REGISTER]))
         for reg in regs:
+            debug("@@ unwinding %s => 0x%x" % (reg, regs[reg]))
             unwind_info.add_saved_register(reg, regs[reg])
         return unwind_info
 

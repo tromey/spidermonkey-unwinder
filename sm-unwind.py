@@ -6,6 +6,8 @@ try:
     from gdb.unwinder import Unwinder
 except ImportError:
     _have_unwinder = False
+    # We need something here.
+    Unwinder = object
 
 def debug(something):
     print(something)

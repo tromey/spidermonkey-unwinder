@@ -20,10 +20,7 @@ FRAMESIZE_SHIFT = gdb.parse_and_eval('js::jit::FRAMESIZE_SHIFT')
 # Must be in sync with JitFrames.cpp:SizeOfFramePrefix.
 # Maps frametype enum base names to corresponding class.
 SizeOfFramePrefix = {
-    # For the entry frame we don't look at the size of the
-    # EntryFrameLayout, but rather CommonFrameLayout.  This matches
-    # what the code in generateEnterJIT does.
-    'JitFrame_Entry': 'CommonFrameLayout',
+    'JitFrame_Entry': 'EntryFrameLayout',
 
     'JitFrame_BaselineJS': 'JitFrameLayout',
     'JitFrame_IonJS': 'JitFrameLayout',
@@ -160,7 +157,14 @@ class UnwinderState(object):
         frame_type = self.next_type
         (size, self.next_type) = self.unpack_descriptor(common)
         debug("@@ type = %s" % frame_enum_names[frame_type])
-        self.next_sp = sp + size + self.sizeof_frame_type(frame_type)
+        if self.next_type == frame_enum_values['JitFrame_Entry']:
+            # For the entry frame we don't look at the size of the
+            # EntryFrameLayout, but rather CommonFrameLayout.  This
+            # matches what the code in generateEnterJIT does.
+            frame_size = self.typeCommonFrameLayoutPointer.target().sizeof
+        else:
+            frame_size = self.sizeof_frame_type(frame_type)
+        self.next_sp = sp + size + frame_size
         frame_id = SpiderMonkeyFrameId(sp, new_pc)
         # Register this frame so the frame filter can find it.
         self.add_frame(sp, { "name": frame_enum_names[self.next_type] })

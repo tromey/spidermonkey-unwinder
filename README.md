@@ -11,6 +11,21 @@ Conceptually, there are two issues to be solved.  First, the raw
 unwinding -- teaching gdb how to work its way up through the frames.
 Second, displaying information about the frames.
 
+# Example
+
+Here are some frames from the included test case, showing what it
+looks like today:
+
+```
+...
+#5  0x00007ffff7fe8e55 in <<JitFrame_Exit>> ()
+#6  0x00007ffff7ff1c43 in <<JitFrame_BaselineStub>> ()
+#7  0x00007ffff7ff2ad7 in <<JitFrame_BaselineJS>> ()
+#8  0x00007ffff7fe7d5f in <<JitFrame_Entry>> ()
+#9  0x00000000005ada11 in EnterBaseline(JSContext*, js::jit::EnterJitData&) (cx=cx@entry=0x1ac3990, data=...) at /home/tromey/firefox-git/gecko/js/src/jit/BaselineJIT.cpp:128
+...
+```
+
 # Requirements
 
 See below for requirements.  Currently patches to both gdb and

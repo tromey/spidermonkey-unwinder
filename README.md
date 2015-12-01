@@ -47,9 +47,6 @@ See https://bugzilla.mozilla.org/show_bug.cgi?id=757969
 * Filters and unwinders are registered globally; but when this is
   merged into SpiderMonkey we can fix that up
 
-* Need a simple architecture abstraction to hold the register numbers
-  and any other per-arch bits
-
 * Need a way to detect the trampoline frames used to enter JIT code.
   These are made by `generateEnterJIT`, and there seem to be just two:
   `JitRuntime::enterJIT_` and `JitRuntime::enterBaselineJIT_`.

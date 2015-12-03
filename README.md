@@ -28,18 +28,22 @@ looks like today:
 
 # Requirements
 
-See below for requirements.  Currently patches to both gdb and
-SpiderMonkey are needed; ask me about them.  Also, this was written
-using a gdb built with Python 3 -- it can be ported to Python 2 but I
-have not done so.
+See below for requirements.  Currently a patch to SpiderMonkey is
+needed.  Also, this was written using a gdb built with Python 3 -- it
+can be ported to Python 2 but I have not done so.
 
 # Unwinding
 
 This work relies on the Python unwinding support that was added in GDB
-7.10.  It also needs a way to tell whether a given PC is already
-covered by some existing object.
+7.10.
+
+It also needs a way to tell whether a given PC is already covered by
+some existing object.
 
 See https://sourceware.org/bugzilla/show_bug.cgi?id=19288
+
+This is currently implemented by reading `/proc/maps`, so it is
+Linux-specific and will not work remotely.
 
 # Display
 
@@ -61,10 +65,6 @@ See https://bugzilla.mozilla.org/show_bug.cgi?id=757969
 
 * Filters and unwinders are registered globally; but when this is
   merged into SpiderMonkey we can fix that up
-
-* Need a way to detect the trampoline frames used to enter JIT code.
-  These are made by `generateEnterJIT`, and there seem to be just two:
-  `JitRuntime::enterJIT_` and `JitRuntime::enterBaselineJIT_`.
 
 * Need a way to compute the frame pointer for the newest JIT frame on
   the stack.  We can maybe stash it in `JSRuntime` in a special debug

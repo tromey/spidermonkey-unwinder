@@ -1,5 +1,6 @@
 import gdb
 from gdb.FrameDecorator import FrameDecorator
+import re
 
 _have_unwinder = True
 try:
@@ -74,6 +75,32 @@ compute_frame_size_map()
 # FIXME another cache candidate.
 per_tls_data = gdb.lookup_global_symbol('js::TlsPerThreadData')
 
+# gdb doesn't have a direct way to tell us if a given address is
+# claimed by some shared library or the executable.  See
+# https://sourceware.org/bugzilla/show_bug.cgi?id=19288
+# In the interest of not requiring a patched gdb, instead we read
+# /proc/.../maps.  This only works locally, but maybe could work
+# remotely using "remote get".  FIXME.
+def parse_proc_maps():
+    mapfile = '/proc/' + str(gdb.selected_inferior().pid) + '/maps'
+    # Note we only examine executable mappings here.
+    matcher = re.compile("^([a-fA-F0-9]+)-([a-fA-F0-9]+)\s+..x.\s+\S+\s+\S+\s+\S*(.*)$")
+    mappings = []
+    with open(mapfile, "r") as inp:
+        for line in inp:
+            match = matcher.match(line)
+            if not match:
+                # Header lines and such.
+                continue
+            start = match.group(1)
+            end = match.group(2)
+            name = match.group(3)
+            if name is '' or (name.startswith('[') and name is not '[vdso]'):
+                # Skip entries not corresponding to a file.
+                continue
+            mappings.append((int(start, 16), int(end, 16)))
+    return mappings
+
 class JitFrameDecorator(FrameDecorator):
     def __init__(self, base, info):
         super(JitFrameDecorator, self).__init__(base)
@@ -120,6 +147,9 @@ class UnwinderState(object):
         self.activation = None
         self.thread = gdb.selected_thread()
         self.frame_map = {}
+        self.proc_mappings = None
+        if self.proc_mappings is None:
+            self.proc_mappings = parse_proc_maps()
         # FIXME cache
         commonFrameLayout = gdb.lookup_type('js::jit::CommonFrameLayout')
         self.typeCommonFrameLayoutPointer = commonFrameLayout.pointer()
@@ -132,6 +162,12 @@ class UnwinderState(object):
 
     def add_frame(self, sp, dictionary):
         self.frame_map[int(sp)] = dictionary
+
+    def text_address_claimed(self, pc):
+        for (start, end) in self.proc_mappings:
+            if (pc >= start and pc <= end):
+                return True
+        return False
 
     def check(self):
         return gdb.selected_thread() is self.thread
@@ -210,10 +246,7 @@ class UnwinderState(object):
         # If some shared library claims this address, bail.  GDB
         # defers to our unwinder by default, but we don't really want
         # that kind of power.
-        # FIXME this does not actually work
-        # See https://sourceware.org/bugzilla/show_bug.cgi?id=19288
-        if gdb.text_address_claimed(int(pc)):
-            debug("@@ early exit: %s" % gdb.solib_name(int(pc)))
+        if self.text_address_claimed(int(pc)):
             return None
 
         if self.next_sp is not None:

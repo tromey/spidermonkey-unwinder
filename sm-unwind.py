@@ -149,9 +149,7 @@ class UnwinderState(object):
         self.activation = None
         self.thread = gdb.selected_thread()
         self.frame_map = {}
-        self.proc_mappings = None
-        if self.proc_mappings is None:
-            self.proc_mappings = parse_proc_maps()
+        self.proc_mappings = parse_proc_maps()
         # FIXME cache
         commonFrameLayout = gdb.lookup_type('js::jit::CommonFrameLayout')
         self.typeCommonFrameLayoutPointer = commonFrameLayout.pointer()

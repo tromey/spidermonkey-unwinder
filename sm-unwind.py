@@ -111,7 +111,7 @@ class JitFrameDecorator(FrameDecorator):
             return "<<" + self.info["name"] + ">>"
         return FrameDecorator.function(self)
 
-class JitFrameFilter(object):
+class SpiderMonkeyFrameFilter(object):
     def __init__(self, state_holder):
         self.name = "SpiderMonkey"
         self.enabled = True
@@ -119,7 +119,7 @@ class JitFrameFilter(object):
         self.state_holder = state_holder
 
     def maybe_wrap_frame(self, frame):
-        if self.state_holder.unwinder_state is None:
+        if self.state_holder is None or self.state_holder.unwinder_state is None:
             return frame
         base = frame.inferior_frame()
         info = self.state_holder.unwinder_state.get_frame(base)
@@ -317,14 +317,17 @@ class SpiderMonkeyUnwinder(Unwinder):
         self.unwinder_state = None
 
 def register_unwinder(objfile, cache):
+    unwinder = None
     if _have_unwinder:
         unwinder = SpiderMonkeyUnwinder()
         gdb.unwinder.register_unwinder(objfile, unwinder, replace=True)
-        filt = JitFrameFilter(unwinder)
-        # A temporary hack.
-        if objfile is None:
-            objfile = gdb
-        objfile.frame_filters[filt.name] = filt
+    # We unconditionally register the frame filter, because at some
+    # point we'll add interpreter frame filtering.
+    filt = SpiderMonkeyFrameFilter(unwinder)
+    # A temporary hack.
+    if objfile is None:
+        objfile = gdb
+    objfile.frame_filters[filt.name] = filt
 
 # A temporary hack.
 register_unwinder(None, None)

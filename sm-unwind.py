@@ -112,15 +112,17 @@ class JitFrameDecorator(FrameDecorator):
         return FrameDecorator.function(self)
 
 class JitFrameFilter(object):
-    name = "SpiderMonkey"
-    enabled = True
-    priority = 100
+    def __init__(self, state_holder):
+        self.name = "SpiderMonkey"
+        self.enabled = True
+        self.priority = 100
+        self.state_holder = state_holder
 
     def maybe_wrap_frame(self, frame):
-        if unwinder_state is None:
+        if self.state_holder.unwinder_state is None:
             return frame
         base = frame.inferior_frame()
-        info = unwinder_state.get_frame(base)
+        info = self.state_holder.unwinder_state.get_frame(base)
         if info is None:
             return frame
         return JitFrameDecorator(frame, info)
@@ -297,27 +299,27 @@ class x64UnwinderState(UnwinderState):
             unwind_info.add_saved_register(reg, regs[reg])
         return unwind_info
 
-unwinder_state = None
-
 class SpiderMonkeyUnwinder(Unwinder):
     def __init__(self):
         super(SpiderMonkeyUnwinder, self).__init__("SpiderMonkey")
+        self.unwinder_state = None
+        # We need to invalidate the unwinder state whenever the
+        # inferior starts executing.  This avoids having a stale
+        # cache.
+        gdb.events.cont.connect(self.invalidate_unwinder_state)
 
     def __call__(self, pending_frame):
-        global unwinder_state
-        if unwinder_state is None or not unwinder_state.check():
-            unwinder_state = x64UnwinderState()
-        return unwinder_state.unwind(pending_frame)
+        if self.unwinder_state is None or not self.unwinder_state.check():
+            self.unwinder_state = x64UnwinderState()
+        return self.unwinder_state.unwind(pending_frame)
 
-def invalidate_unwinder_state(*args, **kwargs):
-    unwinder_state = None
+    def invalidate_unwinder_state(self, *args, **kwargs):
+        self.unwinder_state = None
 
 # FIXME - should register with the objfile (or wherever SpiderMonkey
 # pretty-printers go)
 if _have_unwinder:
-    # We need to invalidate the unwinder state whenever the inferior
-    # starts executing.  This avoids having a stale cache.
-    gdb.events.cont.connect(invalidate_unwinder_state)
-    gdb.unwinder.register_unwinder(None, SpiderMonkeyUnwinder())
-    filt = JitFrameFilter()
+    unwinder = SpiderMonkeyUnwinder()
+    gdb.unwinder.register_unwinder(None, unwinder, replace=True)
+    filt = JitFrameFilter(unwinder)
     gdb.frame_filters[filt.name] = filt

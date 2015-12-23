@@ -27,7 +27,7 @@ SizeOfFramePrefix = {
 
     'JitFrame_BaselineStub': 'BaselineStubFrameLayout',
     'JitFrame_Unwound_BaselineStub': 'BaselineStubFrameLayout',
-    
+
     'JitFrame_IonStub': 'JitStubFrameLayout',
     'JitFrame_Unwound_IonStub': 'JitStubFrameLayout',
 

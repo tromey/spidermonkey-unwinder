@@ -94,7 +94,7 @@ def parse_proc_maps():
                 continue
             start = match.group(1)
             end = match.group(2)
-            name = match.group(3)
+            name = match.group(3).strip()
             if name is '' or (name.startswith('[') and name is not '[vdso]'):
                 # Skip entries not corresponding to a file.
                 continue

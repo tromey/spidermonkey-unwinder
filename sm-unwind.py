@@ -14,10 +14,6 @@ def debug(something):
     # print(something)
     pass
 
-# FIXME should come from a cache
-FRAMETYPE_MASK = (1 << gdb.parse_and_eval('js::jit::FRAMETYPE_BITS')) - 1
-FRAMESIZE_SHIFT = gdb.parse_and_eval('js::jit::FRAMESIZE_SHIFT')
-
 # Must be in sync with JitFrames.cpp:SizeOfFramePrefix.
 # Maps frametype enum base names to corresponding class.
 SizeOfFramePrefix = {
@@ -46,34 +42,29 @@ SizeOfFramePrefix = {
     'JitFrame_Unwound_IonAccessorIC': 'IonAccessorICFrameLayout',
 }
 
-frame_enum_values = None
-frame_size_map = None
-frame_enum_names = None
+class UnwinderTypeCache(object):
+    def __init__(self):
+        self.FRAMETYPE_MASK = (1 << gdb.parse_and_eval('js::jit::FRAMETYPE_BITS')) - 1
+        self.FRAMESIZE_SHIFT = gdb.parse_and_eval('js::jit::FRAMESIZE_SHIFT')
+        self.compute_frame_size_map()
+        commonFrameLayout = gdb.lookup_type('js::jit::CommonFrameLayout')
+        self.typeCommonFrameLayoutPointer = commonFrameLayout.pointer()
+        self.per_tls_data = gdb.lookup_global_symbol('js::TlsPerThreadData')
 
-# Compute map, indexed by a JitFrame value (an integer), whose
-# values are size of corresponding frame classes.
-# FIXME caching
-def compute_frame_size_map():
-    global SizeOfFramePrefix
-    global frame_size_map
-    global frame_enum_values
-    global frame_enum_names
-    t = gdb.lookup_type('enum js::jit::FrameType')
-    frame_size_map = {}
-    frame_enum_values = {}
-    frame_enum_names = {}
-    for field in t.fields():
-        # Strip off "js::jit::".
-        name = field.name[9:]
-        class_type = gdb.lookup_type('js::jit::' + SizeOfFramePrefix[name])
-        frame_enum_values[name] = int(field.enumval)
-        frame_enum_names[int(field.enumval)] = name
-        frame_size_map[int(field.enumval)] = class_type.sizeof
-
-compute_frame_size_map()
-
-# FIXME another cache candidate.
-per_tls_data = gdb.lookup_global_symbol('js::TlsPerThreadData')
+    # Compute map, indexed by a JitFrame value (an integer), whose
+    # values are size of corresponding frame classes.
+    def compute_frame_size_map(self):
+        t = gdb.lookup_type('enum js::jit::FrameType')
+        self.frame_size_map = {}
+        self.frame_enum_values = {}
+        self.frame_enum_names = {}
+        for field in t.fields():
+            # Strip off "js::jit::".
+            name = field.name[9:]
+            class_type = gdb.lookup_type('js::jit::' + SizeOfFramePrefix[name])
+            self.frame_enum_values[name] = int(field.enumval)
+            self.frame_enum_names[int(field.enumval)] = name
+            self.frame_size_map[int(field.enumval)] = class_type.sizeof
 
 # gdb doesn't have a direct way to tell us if a given address is
 # claimed by some shared library or the executable.  See
@@ -141,18 +132,15 @@ class UnwinderState(object):
     # So, each subclass must define SP_REGISTER and PC_REGISTER and
     # implement unwind_entry_frame.
 
-    def __init__(self):
+    def __init__(self, typecache):
         debug("@@ new UnwinderState")
-        global frame_enum_values
         self.next_sp = None
         self.next_type = None
         self.activation = None
         self.thread = gdb.selected_thread()
         self.frame_map = {}
         self.proc_mappings = parse_proc_maps()
-        # FIXME cache
-        commonFrameLayout = gdb.lookup_type('js::jit::CommonFrameLayout')
-        self.typeCommonFrameLayoutPointer = commonFrameLayout.pointer()
+        self.typecache = typecache
 
     def get_frame(self, frame):
         sp = int(frame.read_register(self.SP_REGISTER))
@@ -173,37 +161,35 @@ class UnwinderState(object):
         return gdb.selected_thread() is self.thread
 
     def get_tls_per_thread_data(self):
-        global per_tls_data
-        return per_tls_data.value()['mValue']
+        return self.typecache.per_tls_data.value()['mValue']
 
     def unpack_descriptor(self, common):
         value = common['descriptor_']
-        size = int(value >> FRAMESIZE_SHIFT)
-        frame_type = int(value & FRAMETYPE_MASK)
+        size = int(value >> self.typecache.FRAMESIZE_SHIFT)
+        frame_type = int(value & self.typecache.FRAMETYPE_MASK)
         return (size, frame_type)
 
     def sizeof_frame_type(self, frame_type):
-        global frame_size_map
-        return frame_size_map[frame_type]
+        return self.typecache.frame_size_map[frame_type]
 
     def create_frame(self, sp, pending_frame):
-        common = sp.cast(self.typeCommonFrameLayoutPointer)
+        common = sp.cast(self.typecache.typeCommonFrameLayoutPointer)
         debug("@@ common = 0x%x : %s" % (int(sp), str(common.dereference())))
         new_pc = common['returnAddress_']
         frame_type = self.next_type
         (size, self.next_type) = self.unpack_descriptor(common)
-        debug("@@ type = %s" % frame_enum_names[frame_type])
-        if self.next_type == frame_enum_values['JitFrame_Entry']:
+        debug("@@ type = %s" % self.typecache.frame_enum_names[frame_type])
+        if self.next_type == self.typecache.frame_enum_values['JitFrame_Entry']:
             # For the entry frame we don't look at the size of the
             # EntryFrameLayout, but rather CommonFrameLayout.  This
             # matches what the code in generateEnterJIT does.
-            frame_size = self.typeCommonFrameLayoutPointer.target().sizeof
+            frame_size = self.typecache.typeCommonFrameLayoutPointer.target().sizeof
         else:
             frame_size = self.sizeof_frame_type(frame_type)
         self.next_sp = sp + size + frame_size
         frame_id = SpiderMonkeyFrameId(sp, new_pc)
         # Register this frame so the frame filter can find it.
-        self.add_frame(sp, { "name": frame_enum_names[self.next_type] })
+        self.add_frame(sp, { "name": self.typecache.frame_enum_names[self.next_type] })
         # FIXME it would be great to unwind any other registers here.
         unwind_info = pending_frame.create_unwind_info(frame_id)
         # gdb mysteriously doesn't do this automatically.
@@ -237,7 +223,7 @@ class UnwinderState(object):
         self.add_frame(exit_sp, { "name": "JitFrame_Exit" })
 
         # Now we can just fall into the ordinary case.
-        self.next_type = frame_enum_values['JitFrame_Exit']
+        self.next_type = self.typecache.frame_enum_values['JitFrame_Exit']
         return self.create_frame(jittop, pending_frame)
 
     def unwind(self, pending_frame):
@@ -250,7 +236,7 @@ class UnwinderState(object):
             return None
 
         if self.next_sp is not None:
-            if self.next_type == frame_enum_values['JitFrame_Entry']:
+            if self.next_type == self.typecache.frame_enum_values['JitFrame_Entry']:
                 result = self.unwind_entry_frame(self.next_sp, pending_frame)
                 self.next_sp = None
                 self.next_type = None
@@ -298,8 +284,9 @@ class x64UnwinderState(UnwinderState):
         return unwind_info
 
 class SpiderMonkeyUnwinder(Unwinder):
-    def __init__(self):
+    def __init__(self, typecache):
         super(SpiderMonkeyUnwinder, self).__init__("SpiderMonkey")
+        self.typecache = typecache
         self.unwinder_state = None
         # We need to invalidate the unwinder state whenever the
         # inferior starts executing.  This avoids having a stale
@@ -308,7 +295,7 @@ class SpiderMonkeyUnwinder(Unwinder):
 
     def __call__(self, pending_frame):
         if self.unwinder_state is None or not self.unwinder_state.check():
-            self.unwinder_state = x64UnwinderState()
+            self.unwinder_state = x64UnwinderState(self.typecache)
         return self.unwinder_state.unwind(pending_frame)
 
     def invalidate_unwinder_state(self, *args, **kwargs):
@@ -317,7 +304,7 @@ class SpiderMonkeyUnwinder(Unwinder):
 def register_unwinder(objfile, cache):
     unwinder = None
     if _have_unwinder:
-        unwinder = SpiderMonkeyUnwinder()
+        unwinder = SpiderMonkeyUnwinder(cache)
         gdb.unwinder.register_unwinder(objfile, unwinder, replace=True)
     # We unconditionally register the frame filter, because at some
     # point we'll add interpreter frame filtering.
@@ -327,4 +314,4 @@ def register_unwinder(objfile, cache):
     objfile.frame_filters[filt.name] = filt
 
 # A temporary hack.
-register_unwinder(None, None)
+register_unwinder(None, UnwinderTypeCache())

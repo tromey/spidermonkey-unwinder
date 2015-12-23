@@ -301,10 +301,10 @@ class SpiderMonkeyUnwinder(Unwinder):
     def invalidate_unwinder_state(self, *args, **kwargs):
         self.unwinder_state = None
 
-def register_unwinder(objfile, cache):
+def register_unwinder(objfile):
     unwinder = None
     if _have_unwinder:
-        unwinder = SpiderMonkeyUnwinder(cache)
+        unwinder = SpiderMonkeyUnwinder(UnwinderTypeCache())
         gdb.unwinder.register_unwinder(objfile, unwinder, replace=True)
     # We unconditionally register the frame filter, because at some
     # point we'll add interpreter frame filtering.
@@ -314,4 +314,4 @@ def register_unwinder(objfile, cache):
     objfile.frame_filters[filt.name] = filt
 
 # A temporary hack.
-register_unwinder(None, UnwinderTypeCache())
+register_unwinder(None)

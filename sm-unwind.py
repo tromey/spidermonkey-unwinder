@@ -149,7 +149,8 @@ class SpiderMonkeyFrameId(object):
 # See https://sourceware.org/bugzilla/show_bug.cgi?id=19286 for info
 # about the register name issue.
 #
-# Each subclass must define SP_REGISTER and PC_REGISTER and implement
+# Each subclass must define SP_REGISTER, PC_REGISTER, and
+# SENTINEL_REGISTER (see x64UnwinderState for info); and implement
 # unwind_entry_frame.
 class UnwinderState(object):
     def __init__(self, typecache):
@@ -308,6 +309,12 @@ class UnwinderState(object):
 class x64UnwinderState(UnwinderState):
     SP_REGISTER = 'rsp'
     PC_REGISTER = 'rip'
+
+    # A register unique to this architecture, that is also likely to
+    # have been saved in any frame.  The best thing to use here is
+    # some arch-specific name for PC or SP.
+    SENTINEL_REGISTER = 'rip'
+
     # Must be in sync with Trampoline-x64.cpp:generateEnterJIT.  Note
     # that rip isn't pushed there explicitly, but rather by the
     # previous function's call.
@@ -345,6 +352,9 @@ class x64UnwinderState(UnwinderState):
 # unwinder, and also handles constructing or destroying UnwinderState
 # objects as needed.
 class SpiderMonkeyUnwinder(Unwinder):
+    # A list of all the possible unwinders.  See |self.make_unwinder|.
+    UNWINDERS = [x64UnwinderState]
+
     def __init__(self, typecache):
         super(SpiderMonkeyUnwinder, self).__init__("SpiderMonkey")
         self.typecache = typecache
@@ -353,10 +363,39 @@ class SpiderMonkeyUnwinder(Unwinder):
         # inferior starts executing.  This avoids having a stale
         # cache.
         gdb.events.cont.connect(self.invalidate_unwinder_state)
+        assert self.test_sentinels()
+
+    def test_sentinels(self):
+        # Self-check.
+        regs = {}
+        for unwinder in self.UNWINDERS:
+            if unwinder.SENTINEL_REGISTER in regs:
+                return False
+            regs[unwinder.SENTINEL_REGISTER] = 1
+        return True
+
+    def make_unwinder(self, pending_frame):
+        # gdb doesn't provide a good way to find the architecture.
+        # See https://sourceware.org/bugzilla/show_bug.cgi?id=19399
+        # So, we look at each known architecture and see if the
+        # corresponding "unique register" is known.
+        for unwinder in self.UNWINDERS:
+            try:
+                pending_frame.read_register(unwinder.SENTINEL_REGISTER)
+            except:
+                # Failed to read the register, so let's keep going.
+                # This is more fragile than it might seem, because it
+                # fails if the sentinel register wasn't saved in the
+                # previous frame.
+                continue
+            return unwinder(self.typecache)
+        return None
 
     def __call__(self, pending_frame):
         if self.unwinder_state is None or not self.unwinder_state.check():
-            self.unwinder_state = x64UnwinderState(self.typecache)
+            self.unwinder_state = self.make_unwinder(pending_frame)
+        if not self.unwinder_state:
+            return None
         return self.unwinder_state.unwind(pending_frame)
 
     def invalidate_unwinder_state(self, *args, **kwargs):

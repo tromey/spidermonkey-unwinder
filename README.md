@@ -63,9 +63,6 @@ See https://bugzilla.mozilla.org/show_bug.cgi?id=757969
 
 # To Do
 
-* Filters and unwinders are registered globally; but when this is
-  merged into SpiderMonkey we can fix that up
-
 * Need a way to compute the frame pointer for the newest JIT frame on
   the stack.  We can maybe stash it in `JSRuntime` in a special debug
   mode?  Something like this is done for exit frames, see
@@ -74,9 +71,6 @@ See https://bugzilla.mozilla.org/show_bug.cgi?id=757969
   `ProfilingFrameIterator` would work for this.  As a hack we could
   require the user to use some `set` command and determine this by
   hand.
-
-* Need a type cache for some types in the unwinder.  There's one in
-  the existing gdb scripts in js.
 
 * It would be really good to be able to find all the saved registers
   in ordinary JIT frames.  I'm not sure if this is reasonably possible.

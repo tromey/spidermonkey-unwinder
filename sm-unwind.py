@@ -324,7 +324,6 @@ def register_unwinder(objfile, cache):
     # We unconditionally register the frame filter, because at some
     # point we'll add interpreter frame filtering.
     filt = SpiderMonkeyFrameFilter(unwinder)
-    # A temporary hack.
     if objfile is None:
         objfile = gdb
     objfile.frame_filters[filt.name] = filt

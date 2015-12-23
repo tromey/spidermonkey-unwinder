@@ -316,10 +316,15 @@ class SpiderMonkeyUnwinder(Unwinder):
     def invalidate_unwinder_state(self, *args, **kwargs):
         self.unwinder_state = None
 
-# FIXME - should register with the objfile (or wherever SpiderMonkey
-# pretty-printers go)
-if _have_unwinder:
-    unwinder = SpiderMonkeyUnwinder()
-    gdb.unwinder.register_unwinder(None, unwinder, replace=True)
-    filt = JitFrameFilter(unwinder)
-    gdb.frame_filters[filt.name] = filt
+def register_unwinder(objfile, cache):
+    if _have_unwinder:
+        unwinder = SpiderMonkeyUnwinder()
+        gdb.unwinder.register_unwinder(objfile, unwinder, replace=True)
+        filt = JitFrameFilter(unwinder)
+        # A temporary hack.
+        if objfile is None:
+            objfile = gdb
+        objfile.frame_filters[filt.name] = filt
+
+# A temporary hack.
+register_unwinder(None, None)
